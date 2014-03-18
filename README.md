@@ -28,8 +28,6 @@ producer; the last stage, the sink or consumer.
 
 ## (require '[papaline.core :refer :all])
 
-### Declaring a stage
-
 A stage is a simple clojure function wrapped with the `stage`
 function.
 

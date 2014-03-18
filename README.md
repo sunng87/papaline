@@ -48,7 +48,7 @@ A pipeline is a ordered sequence of stages.
 )
 
 (def save-status
-  (pipeline (map stage [query-followers fan-out-to-redis])))
+  (pipeline (map stage [save-msg query-followers fan-out-to-redis])))
 
 ```
 

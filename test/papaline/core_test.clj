@@ -12,7 +12,7 @@
   (let [f (take 5 (repeat (fn [c] (swap! c inc))))
         stgs (map stage f)
         ppl (pipeline stgs)]
-    (is (= 2 (count ppl)))
+    (is (= 3 (count ppl)))
     (is (fn? (first ppl)))))
 
 (deftest test-run-pipeline
@@ -52,3 +52,11 @@
         ppl (pipeline stgs)]
     (is (= :timeout (run-pipeline-timeout ppl 1000 :timeout)))
     (cancel-pipeline ppl)))
+
+(deftest test-pipeline-stage
+  (let [c0 (atom 0)
+        num 5
+        stgs (vec (map copy-stage (take num (repeat (fn [c] (swap! c inc))))))
+        ppl (pipeline stgs)]
+    (run-pipeline-wait (pipeline [(pipeline-stage ppl)]) c0)
+    (is (= num @c0))))

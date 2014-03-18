@@ -3,14 +3,16 @@
              :refer :all
              :exclude [partition-by map into reduce partition take merge]]))
 
-(defn stage [stage-fn & {:keys [buffer-size
+(defn stage [stage-fn & {:keys [in-chan
+                                buffer-size
                                 buffer-type]
                          :or {buffer-size 100}}]
-  (let [buffer-fn (case buffer-type
-                    :sliding sliding-buffer
-                    :dropping dropping-buffer
-                    buffer)
-        in-chan (chan (buffer-fn buffer-size))]
+  (let [in-chan (or in-chan
+                    (let [buffer-fn (case buffer-type
+                                      :sliding sliding-buffer
+                                      :dropping dropping-buffer
+                                      buffer)]
+                      (chan (buffer-fn buffer-size))))]
     [(fn [out-chan done-chan]
        (go-loop []
                 (let [[ctx port] (alts! [done-chan in-chan] :priority true)]
@@ -45,7 +47,8 @@
     [(fn [call-info]
        (go
         (>! entry call-info)))
-     done]))
+     done
+     stages]))
 
 (defn run-pipeline [pipeline & args]
   ((first pipeline) {:args args}))
@@ -66,6 +69,15 @@
       (if (= port timeout-chan)
         timeout-val
         (:args v)))))
+
+(defn pipeline-stage
+  "pipeline as a stage"
+  [pipeline]
+  (let [stages (nth pipeline 2)
+        in-chan (second (first stages))]
+    (stage (fn [& args]
+             (apply run-pipeline-wait pipeline args))
+           :in-chan in-chan)))
 
 (defn cancel-pipeline [pipeline]
   (>!! (second pipeline) 0))

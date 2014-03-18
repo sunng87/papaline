@@ -5,12 +5,11 @@
 
 (defn stage [stage-fn & {:keys [buffer-size
                                 buffer-type]
-                         :or {buffer-size 100
-                              buffer-type :block}}]
+                         :or {buffer-size 100}}]
   (let [buffer-fn (case buffer-type
-                    :block buffer
-                    :fifo sliding-buffer
-                    :filo dropping-buffer)
+                    :sliding sliding-buffer
+                    :dropping dropping-buffer
+                    buffer)
         in-chan (chan (buffer-fn buffer-size))]
     [(fn [out-chan done-chan]
        (go-loop []

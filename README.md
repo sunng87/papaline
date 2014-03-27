@@ -21,6 +21,8 @@ producer; the last stage, the sink or consumer.
 
 ## Usage
 
+Like `clojure.core/comp`, with concurrent magic.
+
 ## Leiningen
 
 ![latest version on

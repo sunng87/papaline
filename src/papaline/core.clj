@@ -37,7 +37,8 @@
 
 (defn pipeline [stages]
   (let [entry (-> stages first second)
-        done (chan)]
+        done (chan)
+        stages (mapv #(if (fn? %) (stage %) %) stages)]
     (loop [stages* stages]
       (when (first stages*)
         (let [[stage* in] (first stages*)

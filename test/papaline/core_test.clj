@@ -4,9 +4,10 @@
             [papaline.core :refer :all]))
 
 (deftest test-stage
-  (let [f (fn [arg])]
-    (is (= 2 (count (stage f))))
-    (is (fn? (first (stage f))))))
+  (let [f (fn [arg])
+        realized-stage (stage f)]
+    (is (= 2 (count realized-stage)))
+    (is (fn? (first realized-stage)))))
 
 (deftest test-pipeline
   (let [f (take 5 (repeat (fn [c] (swap! c inc))))

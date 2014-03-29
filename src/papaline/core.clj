@@ -7,27 +7,12 @@
                                 buffer-size
                                 buffer-type]
                          :or {buffer-size 100}}]
-  (let [in-chan (or in-chan
-                    (let [buffer-fn (case buffer-type
-                                      :sliding sliding-buffer
-                                      :dropping dropping-buffer
-                                      buffer)]
-                      (chan (buffer-fn buffer-size))))]
-    [(fn [out-chan done-chan]
-       (go-loop []
-                (let [[ctx port] (alts! [done-chan in-chan] :priority true)]
-                  (if (not= port done-chan)
-                    (do
-                      (go
-                       (let [result (apply stage-fn (:args ctx))
-                             ctx (assoc ctx :args result)]
-                         (if out-chan
-                           (>! out-chan ctx)
-                           (when (:wait ctx)
-                             (>! (:wait ctx) ctx)))))
-                      (recur))
-                    (close! in-chan)))))
-     in-chan]))
+  (let [buffer-fn (case buffer-type
+                    :sliding sliding-buffer
+                    :dropping dropping-buffer
+                    buffer)
+        buffer-factory #(chan (buffer-fn buffer-size))]
+    [buffer-factory stage-fn]))
 
 (defn copy-stage [stage-fn & options]
   (let [sfn (fn [& args]
@@ -36,20 +21,33 @@
     (apply stage sfn options)))
 
 (defn pipeline [stages]
-  (let [entry (-> stages first second)
-        done (chan)
-        stages (mapv #(if (fn? %) (stage %) %) stages)]
-    (loop [stages* stages]
+  (let [stages (mapv #(if (fn? %) (stage %) %) stages)
+        realized-stages (mapv #(vector ((first %)) (second %)) stages)
+        entry (-> realized-stages first first)
+        done-chan (chan)]
+    (loop [stages* realized-stages]
       (when (first stages*)
-        (let [[stage* in] (first stages*)
-              [_ out] (second stages*)]
-          (stage* out done)
+        (let [[in-chan task] (first stages*)
+              [out-chan _] (second stages*)]
+          (go-loop []
+                   (let [[ctx port] (alts! [done-chan in-chan] :priority true)]
+                     (if (not= port done-chan)
+                       (do
+                         (go
+                          (let [result (apply task (:args ctx))
+                                ctx (assoc ctx :args result)]
+                            (if out-chan
+                              (>! out-chan ctx)
+                              (when (:wait ctx)
+                                (>! (:wait ctx) ctx)))))
+                         (recur))
+                       (close! in-chan))))
           (recur (rest stages*)))))
     [(fn [call-info]
        (go
         (>! entry call-info)))
-     done
-     stages]))
+     done-chan
+     realized-stages]))
 
 (defn run-pipeline [pipeline & args]
   ((first pipeline) {:args args}))

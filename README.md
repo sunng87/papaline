@@ -25,8 +25,7 @@ Like `clojure.core/comp`, with concurrent magic.
 
 ## Leiningen
 
-![latest version on
- clojars](https://clojars.org/info.sunng/papaline/latest-version.svg)
+`[info.sunng/papaline 0.1.1]`
 
 ## (require '[papaline.core :refer :all])
 

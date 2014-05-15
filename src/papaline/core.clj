@@ -34,12 +34,15 @@
                      (if (not= port done-chan)
                        (do
                          (go
-                          (let [result (apply task (:args ctx))
-                                ctx (assoc ctx :args result)]
-                            (if out-chan
-                              (>! out-chan ctx)
-                              (when (:wait ctx)
-                                (>! (:wait ctx) ctx)))))
+                           (let [ctx (try
+                                       (assoc ctx :args (apply task (:args ctx)))
+                                       (catch clojure.lang.ExceptionInfo e
+                                         (when (:abort (ex-data e))
+                                           (merge ctx (ex-data e)))))]
+                             (if (and (not (:abort ctx)) out-chan)
+                               (>! out-chan ctx)
+                               (when (:wait ctx)
+                                 (>! (:wait ctx) ctx)))))
                          (recur))
                        (close! in-chan))))
           (recur (rest stages*)))))
@@ -80,3 +83,7 @@
 
 (defn cancel-pipeline [pipeline]
   (>!! (second pipeline) 0))
+
+(defn abort
+  ([] (throw (ex-info "Aborted" {:abort true})))
+  ([ret] (throw (ex-info "Aborted" {:abort true :ret ret}))))

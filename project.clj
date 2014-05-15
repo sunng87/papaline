@@ -1,4 +1,4 @@
-(defproject info.sunng/papaline "0.1.2"
+(defproject info.sunng/papaline "0.2.0"
   :description "Clojure concurrent pipeline on core.async"
   :url "http://github.com/sunng87/papaline"
   :license {:name "Eclipse Public License"
@@ -6,4 +6,7 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [org.clojure/core.async "0.1.301.0-deb34a-alpha"]]
   :scm {:url "https://github.com/sunng87/papaline"
-        :name "github"})
+        :name "github"}
+  :lein-release {:scm :git
+                 :deploy-via :shell
+                 :shell ["lein" "deploy" "clojars"]})

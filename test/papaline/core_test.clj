@@ -73,6 +73,9 @@
 (deftest test-fork-join
   (let [fork-stage (fn [] (fork (take 5 (repeat [1]))))
         join-inc-stage (fn [i] (join (inc i)))
-        combine-stage (fn [l] (reduce + (flatten l)))]
+        combine-stage (fn [& l] (reduce + l))]
     (is (= 10 (run-pipeline-wait
-               (pipeline [fork-stage join-inc-stage combine-stage]))))))
+               (pipeline [fork-stage join-inc-stage combine-stage]))))
+    (is (= [2 2 2 2 2]
+           (run-pipeline-wait
+            (pipeline [fork-stage join-inc-stage]))))))

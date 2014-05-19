@@ -40,7 +40,28 @@
                                          (when (:abort (ex-data e))
                                            (merge ctx (ex-data e)))))]
                              (if (and (not (:abort ctx)) out-chan)
-                               (>! out-chan ctx)
+
+                               (cond
+                                ;; the results are forked
+                                (:fork (meta (:args ctx)))
+                                (let [ctx (update-in ctx [:forks]
+                                                     #(conj (or % []) (count (:args ctx))))
+                                      ctx (update-in ctx [:fork-rets]
+                                                     #(conj (or % []) (atom [])))]
+                                  (doseq [forked-args (:args ctx)]
+                                    (>! out-chan (assoc ctx :args forked-args))))
+
+                                ;; this tasks requires join
+                                (:join (meta (:args ctx)))
+                                (do
+                                  (let [fork-rets (swap! (last (:fork-rets ctx)) conj (:args ctx))]
+                                    (when (= (last (:forks ctx)) (count fork-rets))
+                                      (>! out-chan (assoc ctx
+                                                     :forks (vec (drop-last (:forks ctx)))
+                                                     :fork-rets (vec (drop-last (:fork-rets ctx))))))))
+
+                                ;; normal linear
+                                :else (>! out-chan ctx))
                                (when (:wait ctx)
                                  (>! (:wait ctx) ctx)))))
                          (recur))
@@ -87,3 +108,14 @@
 (defn abort
   ([] (throw (ex-info "Aborted" {:abort true})))
   ([ret] (throw (ex-info "Aborted" {:abort true :ret ret}))))
+
+(defn- assoc-meta [v & args]
+  (with-meta v (apply (or (meta v) {}) args)))
+
+(defn fork [ret]
+  (when-not (sequential? ret)
+    (throw (IllegalArgumentException. "Only sequential value is forkable.")))
+  (assoc-meta ret :fork true))
+
+(defn join [ret]
+  (assoc-meta ret :join true))

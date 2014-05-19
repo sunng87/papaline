@@ -60,7 +60,7 @@
                                 (let [fork-rets (swap! (last (:fork-rets ctx)) conj @(:args ctx))]
                                   (when (= (last (:forks ctx)) (count fork-rets))
                                     (>! out-chan (assoc ctx
-                                                   :args [fork-rets]
+                                                   :args fork-rets
                                                    :forks (vec (drop-last (:forks ctx)))
                                                    :fork-rets (vec (drop-last (:fork-rets ctx)))))))
 

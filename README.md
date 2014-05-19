@@ -23,11 +23,21 @@ producer; the last stage, the sink or consumer.
 
 Like `clojure.core/comp`, with concurrent magic.
 
-## Leiningen
+### Bootstrap
 
-`[info.sunng/papaline 0.2.0]`
+#### Leiningen
 
-## (require '[papaline.core :refer :all])
+```clojure
+[info.sunng/papaline 0.3.0]
+```
+
+#### Clojure
+
+```clojure
+(require '[papaline.core :refer :all])
+```
+
+### Pipeline functions
 
 A stage is a simple clojure function wrapped with the `stage`
 function.
@@ -61,7 +71,77 @@ Run the pipeline
   "Putin orders to approve draft bill on integration of #Crimea into Russia http://on.rt.com/xhz2zu")
 ```
 
-More detailed doc coming soon.
+Run pipeline and wait for the results
+
+```clojure
+(println (run-pipeline-wait save-status
+  "userid"
+  "Putin orders to approve draft bill on integration of #Crimea into
+  Russia http://on.rt.com/xhz2zu"))
+```
+
+And wait with a timeout
+
+```clojure
+(println (run-pipeline-timeout save-status
+  5000 ;; timeout in msecs
+  nil ;; return value on timeout
+  ;; arguments
+  "userid"
+  "Putin orders to approve draft bill on integration of #Crimea into
+  Russia http://on.rt.com/xhz2zu"))
+```
+
+Stop a pipeline: the entire pipeline will be stopped and no more input
+will be processed.
+
+```clojure
+(cancel-pipeline save-status)
+```
+
+### Special return types in stage functions
+
+#### (abort)
+
+You can abort task execution at any stage of pipeline. Just return in
+your stage function.
+
+```clojure
+(defn my-stage []
+  (if ...
+    ...
+    (abort)))
+```
+
+You can also add some return value for `run-pipeline-wait` and
+`run-pipeline-timeout` with `(abort)`:
+
+```clojure
+;; returns 123 as pipeline result
+(abort 123)
+```
+
+#### (fork) and (join)
+
+New in 0.3, you can use `(fork)` to split tasks, to execute them in
+parallel in the next stage.
+
+`(join)`ed results will wait for all forked tasks to finish, then pass
+them as a whole result to next stage.
+
+Note that if you do not join the results, then the first sub-task
+result in forked staged will be returned value for `run-pipeline-wait`
+and `run-pipeline-timeout`
+
+```clojure
+(defn find-followers []
+  ...
+  (fork (map #(vector % msg-id) followers)))
+
+(defn fanout-to-redis [user-id msg-id]
+  ...
+  (join true))
+```
 
 ## License
 

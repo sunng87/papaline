@@ -38,10 +38,13 @@
                                        (assoc ctx :args (apply task (:args ctx)))
                                        (catch clojure.lang.ExceptionInfo e
                                          (when (:abort (ex-data e))
-                                           (merge ctx (ex-data e)))))]
-                             (if (and (not (:abort ctx)) out-chan)
-
+                                           (merge ctx (ex-data e)))))
+                                 out-chan (or out-chan (:wait ctx))]
+                             (when out-chan
                                (cond
+                                (:abort ctx)
+                                (when (:wait ctx) (>! (:wait ctx) ctx))
+
                                 ;; the results are forked
                                 (:fork (meta (:args ctx)))
                                 (let [ctx (-> ctx
@@ -62,9 +65,7 @@
                                                    :fork-rets (vec (drop-last (:fork-rets ctx)))))))
 
                                 ;; normal linear
-                                :else (>! out-chan ctx))
-                               (when (:wait ctx)
-                                 (>! (:wait ctx) ctx)))))
+                                :else (>! out-chan ctx)))))
                          (recur))
                        (close! in-chan))))
           (recur (rest stages*)))))

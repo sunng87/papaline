@@ -44,21 +44,22 @@
                                (cond
                                 ;; the results are forked
                                 (:fork (meta (:args ctx)))
-                                (let [ctx (update-in ctx [:forks]
-                                                     #(conj (or % []) (count (:args ctx))))
-                                      ctx (update-in ctx [:fork-rets]
-                                                     #(conj (or % []) (atom [])))]
-                                  (doseq [forked-args (:args ctx)]
+                                (let [ctx (-> ctx
+                                              (update-in [:forks]
+                                                         #(conj (or % []) (count @(:args ctx))))
+                                              (update-in  [:fork-rets]
+                                                          #(conj (or % []) (atom []))))]
+                                  (doseq [forked-args @(:args ctx)]
                                     (>! out-chan (assoc ctx :args forked-args))))
 
                                 ;; this tasks requires join
                                 (:join (meta (:args ctx)))
-                                (do
-                                  (let [fork-rets (swap! (last (:fork-rets ctx)) conj (:args ctx))]
-                                    (when (= (last (:forks ctx)) (count fork-rets))
-                                      (>! out-chan (assoc ctx
-                                                     :forks (vec (drop-last (:forks ctx)))
-                                                     :fork-rets (vec (drop-last (:fork-rets ctx))))))))
+                                (let [fork-rets (swap! (last (:fork-rets ctx)) conj @(:args ctx))]
+                                  (when (= (last (:forks ctx)) (count fork-rets))
+                                    (>! out-chan (assoc ctx
+                                                   :args [fork-rets]
+                                                   :forks (vec (drop-last (:forks ctx)))
+                                                   :fork-rets (vec (drop-last (:fork-rets ctx)))))))
 
                                 ;; normal linear
                                 :else (>! out-chan ctx))
@@ -109,13 +110,30 @@
   ([] (throw (ex-info "Aborted" {:abort true})))
   ([ret] (throw (ex-info "Aborted" {:abort true :ret ret}))))
 
+(deftype MetadataObj [val meta-map-wrapper]
+  clojure.lang.IDeref
+  (deref [this]
+    val)
+
+  clojure.lang.IObj
+  (withMeta [this m]
+    (swap! meta-map-wrapper merge m)
+    this)
+
+  clojure.lang.IMeta
+  (meta [this]
+    @meta-map-wrapper))
+
+(defn- meta-obj [v]
+  (MetadataObj. v (atom {})))
+
 (defn- assoc-meta [v & args]
-  (with-meta v (apply (or (meta v) {}) args)))
+  (with-meta v (apply assoc (or (meta v) {}) args)))
 
 (defn fork [ret]
   (when-not (sequential? ret)
     (throw (IllegalArgumentException. "Only sequential value is forkable.")))
-  (assoc-meta ret :fork true))
+  (assoc-meta (meta-obj ret) :fork true))
 
 (defn join [ret]
-  (assoc-meta ret :join true))
+  (assoc-meta (meta-obj ret) :join true))

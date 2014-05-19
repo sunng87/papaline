@@ -69,3 +69,10 @@
         ppl (pipeline [stg0 stg1])]
     (run-pipeline-wait ppl c0)
     (is (= 0 @c0))))
+
+(deftest test-fork-join
+  (let [fork-stage (fn [] (fork (take 5 (repeat [1]))))
+        join-inc-stage (fn [i] (join (inc i)))
+        combine-stage (fn [l] (reduce + (flatten l)))]
+    (is (= 10 (run-pipeline-wait
+               (pipeline [fork-stage join-inc-stage combine-stage]))))))

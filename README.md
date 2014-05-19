@@ -25,7 +25,7 @@ Like `clojure.core/comp`, with concurrent magic.
 
 ## Leiningen
 
-`[info.sunng/papaline 0.1.2]`
+`[info.sunng/papaline 0.2.0]`
 
 ## (require '[papaline.core :refer :all])
 

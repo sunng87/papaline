@@ -42,7 +42,7 @@ Like `clojure.core/comp`, with concurrent magic.
 A stage is a simple clojure function wrapped with the `stage`
 function.
 
-A pipeline is a ordered sequence of stages.
+A pipeline is an ordered sequence of stages.
 
 ```clojure
 (defn save-msg [user-id msg]

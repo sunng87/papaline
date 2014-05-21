@@ -1,4 +1,4 @@
-(defproject info.sunng/papaline "0.3.2-SNAPSHOT"
+(defproject info.sunng/papaline "0.3.2"
   :description "Clojure concurrent pipeline on core.async"
   :url "http://github.com/sunng87/papaline"
   :license {:name "Eclipse Public License"

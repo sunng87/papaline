@@ -36,9 +36,13 @@
                          (go
                            (let [ctx (try
                                        (assoc ctx :args (apply task (:args ctx)))
-                                       (catch clojure.lang.ExceptionInfo e
-                                         (when (:abort (ex-data e))
-                                           (merge ctx (ex-data e)))))
+                                       (catch Exception e
+                                         (if (and (instance? clojure.lang.ExceptionInfo e)
+                                                  (:abort (ex-data e)))
+                                           (merge ctx (ex-data e))
+                                           (do
+                                             (.printStackTrace e)
+                                             (throw e)))))
                                  out-chan (or out-chan (:wait ctx))]
                              (when out-chan
                                (cond

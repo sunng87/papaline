@@ -7,6 +7,4 @@
                  [org.clojure/core.async "0.1.301.0-deb34a-alpha"]]
   :scm {:url "https://github.com/sunng87/papaline"
         :name "github"}
-  :lein-release {:scm :git
-                 :deploy-via :shell
-                 :shell ["lein" "deploy" "clojars"]})
+  :deploy-repositories {"releases" :clojars})

@@ -79,3 +79,8 @@
     (is (= [2 2 2 2 2]
            (run-pipeline-wait
             (pipeline [fork-stage join-inc-stage]))))))
+
+(deftest test-args-auto-vec
+  (let [fff (fn [] 1)
+        ff2 (fn [a] (inc a))]
+    (is (= 2 (run-pipeline-wait (pipeline [fff ff2]))))))

@@ -35,7 +35,11 @@
                        (do
                          (go
                            (let [ctx (try
-                                       (assoc ctx :args (apply task (:args ctx)))
+                                       (let [args (:args ctx)
+                                             args (if (or (nil? args) ;; empty arguments
+                                                          (sequential? args))
+                                                    args [args])]
+                                         (assoc ctx :args (apply task args)))
                                        (catch Exception e
                                          (if (and (instance? clojure.lang.ExceptionInfo e)
                                                   (:abort (ex-data e)))
@@ -111,10 +115,6 @@
 (defn cancel-pipeline [pipeline]
   (>!! (second pipeline) 0))
 
-(defn abort
-  ([] (throw (ex-info "Aborted" {:abort true})))
-  ([ret] (throw (ex-info "Aborted" {:abort true :ret ret}))))
-
 (deftype MetadataObj [val meta-map-wrapper]
   clojure.lang.IDeref
   (deref [this]
@@ -134,6 +134,10 @@
 
 (defn- assoc-meta [v & args]
   (with-meta v (apply assoc (or (meta v) {}) args)))
+
+(defn abort
+  ([] (throw (ex-info "Aborted" {:abort true})))
+  ([ret] (throw (ex-info "Aborted" {:abort true :ret ret}))))
 
 (defn fork [ret]
   (when-not (sequential? ret)

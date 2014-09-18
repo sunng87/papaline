@@ -1,7 +1,8 @@
 (ns papaline.core
   (:require [clojure.core.async :as a
              :refer :all
-             :exclude [partition-by map into reduce partition take merge]]))
+             :exclude [partition-by map into reduce partition take merge
+                       pipeline]]))
 
 (defn stage [stage-fn & {:keys [in-chan
                                 buffer-size

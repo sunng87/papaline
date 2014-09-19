@@ -85,9 +85,18 @@
         ff2 (fn [a] (inc a))]
     (is (= 2 (run-pipeline-wait (pipeline [fff ff2]))))))
 
-(deftest test-error-handler
-  (let [e (atom false)
+(deftest test-error-handler-sync
+  (let [e (atom 0)
         f (fn [] (throw (ex-info "expected error.")))
-        p (pipeline [f] :error-handler (fn [_ _] (swap! e (constantly true))))]
+        p (pipeline [f] :error-handler (fn [_ _] (swap! e inc)))]
     (try (run-pipeline-wait p) (catch Exception e))
-    (is @e)))
+    (is (= 1 @e))))
+
+(deftest test-error-handler-async
+  (let [e (atom 0)
+        sync (chan)
+        f (fn [] (throw (ex-info "expected error")))
+        p (pipeline [f] :error-handler (fn [_ _] (swap! e inc) (>!! sync 1)))]
+    (run-pipeline p)
+    (<!! sync)
+    (is (= 1 @e))))

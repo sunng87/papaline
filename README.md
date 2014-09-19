@@ -27,9 +27,7 @@ Like `clojure.core/comp`, with concurrent magic.
 
 #### Leiningen
 
-```clojure
-[info.sunng/papaline 0.3.2]
-```
+![latest version on clojars](https://clojars.org/info.sunng/papaline/latest-version.svg)
 
 #### Clojure
 

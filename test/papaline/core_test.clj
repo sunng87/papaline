@@ -84,3 +84,10 @@
   (let [fff (fn [] 1)
         ff2 (fn [a] (inc a))]
     (is (= 2 (run-pipeline-wait (pipeline [fff ff2]))))))
+
+(deftest test-error-handler
+  (let [e (atom false)
+        f (fn [] (throw (ex-info "expected error.")))
+        p (pipeline [f] :error-handler (fn [_ _] (swap! e (constantly true))))]
+    (try (run-pipeline-wait p) (catch Exception e))
+    (is @e)))

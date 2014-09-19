@@ -21,7 +21,7 @@
               args)]
     (apply stage sfn options)))
 
-(defn pipeline [stages]
+(defn pipeline [stages & {:keys [error-handler]}]
   (let [stages (mapv #(if (fn? %) (stage %) %) stages)
         realized-stages (mapv #(vector ((first %)) (second %)) stages)
         entry (-> realized-stages first first)
@@ -46,8 +46,10 @@
                                                   (:abort (ex-data e)))
                                            (merge ctx (ex-data e))
                                            (do
-                                             (.printStackTrace e)
-                                             (throw e)))))
+                                             (when error-handler
+                                               (error-handler e (:args ctx)))
+                                             (when (:error ctx)
+                                               (>! (:error ctx) e))))))
                                  out-chan (or out-chan (:wait ctx))]
                              (when out-chan
                                (cond
@@ -88,21 +90,32 @@
   ((first pipeline) {:args args}))
 
 (defn run-pipeline-wait [pipeline & args]
-  (let [sync-chan (chan)]
+  (let [sync-chan (chan)
+        error-chan (chan)]
     ((first pipeline) {:args args
-                       :wait sync-chan})
-    (:args (first (alts!! [(second pipeline) sync-chan])))))
+                       :wait sync-chan
+                       :error error-chan})
+    (let [done-chan (second pipeline)
+          [result port] (alts!! [done-chan error-chan sync-chan] :priority true)]
+      (condp = port
+        sync-chan (:args result)
+        error-chan (throw result)
+        done-chan (throw (ex-info "Pipeline closed"))))))
 
 (defn run-pipeline-timeout [pipeline timeout-interval timeout-val & args]
   (let [sync-chan (chan)
+        error-chan (chan)
         timeout-chan (timeout timeout-interval)]
     ((first pipeline) {:args args
-                       :wait sync-chan})
+                       :wait sync-chan
+                       :error error-chan})
     (let [done-chan (second pipeline)
-          [v port] (alts!! [done-chan timeout-chan sync-chan] :priority true)]
-      (if (= port timeout-chan)
-        timeout-val
-        (:args v)))))
+          [result port] (alts!! [done-chan timeout-chan error-chan sync-chan] :priority true)]
+      (condp = port
+        done-chan (throw (ex-info "Pipeline closed"))
+        sync-chan (:args result)
+        error-chan (throw result)
+        timeout-chan timeout-val))))
 
 (defn pipeline-stage
   "pipeline as a stage"

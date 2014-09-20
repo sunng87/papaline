@@ -141,6 +141,29 @@ and `run-pipeline-timeout`
   (join true))
 ```
 
+### Dealing with Except!ons
+
+It is possible to define an error handler for each pipeline. An error
+handler is a simple function takes the Exception and current input as
+arguments.
+
+```clojure
+(pipeline
+  (map stage [save-msg query-followers fan-out-to-redis])
+  :error-handler (fn [e args]
+    ;; logging...
+    ))
+```
+
+Currently we don't information about the exact stage which the
+exception is produced because we don't have metadata for stages. If
+you need stage specific error handler, it's better to do try-catch in
+the stage function.
+
+For synchronous call like `(run-pipeline-wait)` and
+`(run-pipeline-timeout)`, the exception will be thrown to caller
+thread too.
+
 ## License
 
 Copyright © 2014 Sun Ning <sunng@about.me>

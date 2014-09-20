@@ -4,6 +4,9 @@
              :exclude [partition-by map into reduce partition take merge
                        pipeline]]))
 
+(defrecord Stage [buffer-factory stage-fn])
+(defrecord RealizedStage [buffer stage-fn])
+
 (defn stage [stage-fn & {:keys [in-chan
                                 buffer-size
                                 buffer-type]
@@ -13,7 +16,7 @@
                     :dropping dropping-buffer
                     buffer)
         buffer-factory #(chan (buffer-fn buffer-size))]
-    [buffer-factory stage-fn]))
+    (Stage. buffer-factory stage-fn)))
 
 (defn copy-stage [stage-fn & options]
   (let [sfn (fn [& args]
@@ -21,15 +24,20 @@
               args)]
     (apply stage sfn options)))
 
+(defrecord Pipeline [entry-fn done-chan stages])
+
 (defn pipeline [stages & {:keys [error-handler]}]
   (let [stages (mapv #(if (fn? %) (stage %) %) stages)
-        realized-stages (mapv #(vector ((first %)) (second %)) stages)
-        entry (-> realized-stages first first)
+        realized-stages (mapv #(RealizedStage. ((.buffer-factory %))
+                                               (.stage-fn %))
+                              stages)
+        entry (-> realized-stages first (.buffer))
         done-chan (chan)]
     (loop [stages* realized-stages]
       (when (first stages*)
-        (let [[in-chan task] (first stages*)
-              [out-chan _] (second stages*)]
+        (let [in-chan (.buffer (first stages*))
+              task (.stage-fn (first stages*))
+              out-chan (when (second stages*) (.buffer (second stages*)))]
           (go-loop []
                    (let [[ctx port] (alts! [done-chan in-chan] :priority true)]
                      (if (not= port done-chan)
@@ -80,22 +88,22 @@
                          (recur))
                        (close! in-chan))))
           (recur (rest stages*)))))
-    [(fn [call-info]
-       (go
-        (>! entry call-info)))
-     done-chan
-     realized-stages]))
+    (Pipeline. (fn [call-info]
+                 (go
+                   (>! entry call-info)))
+               done-chan
+               realized-stages)))
 
 (defn run-pipeline [pipeline & args]
-  ((first pipeline) {:args args}))
+  ((.entry-fn pipeline) {:args args}))
 
 (defn run-pipeline-wait [pipeline & args]
   (let [sync-chan (chan)
         error-chan (chan)]
-    ((first pipeline) {:args args
-                       :wait sync-chan
-                       :error error-chan})
-    (let [done-chan (second pipeline)
+    ((.entry-fn pipeline) {:args args
+                           :wait sync-chan
+                           :error error-chan})
+    (let [done-chan (.done-chan pipeline)
           [result port] (alts!! [done-chan error-chan sync-chan] :priority true)]
       (condp = port
         sync-chan (:args result)
@@ -106,10 +114,10 @@
   (let [sync-chan (chan)
         error-chan (chan)
         timeout-chan (timeout timeout-interval)]
-    ((first pipeline) {:args args
-                       :wait sync-chan
-                       :error error-chan})
-    (let [done-chan (second pipeline)
+    ((.entry-fn pipeline) {:args args
+                           :wait sync-chan
+                           :error error-chan})
+    (let [done-chan (.done-chan pipeline)
           [result port] (alts!! [done-chan timeout-chan error-chan sync-chan] :priority true)]
       (condp = port
         done-chan (throw (ex-info "Pipeline closed"))
@@ -120,14 +128,14 @@
 (defn pipeline-stage
   "pipeline as a stage"
   [pipeline]
-  (let [stages (nth pipeline 2)
-        in-chan (second (first stages))]
+  (let [stages (.stages pipeline)
+        in-chan (.buffer (first stages))]
     (stage (fn [& args]
              (apply run-pipeline-wait pipeline args))
            :in-chan in-chan)))
 
 (defn cancel-pipeline [pipeline]
-  (>!! (second pipeline) 0))
+  (>!! (.done-chan pipeline) 0))
 
 (deftype MetadataObj [val meta-map-wrapper]
   clojure.lang.IDeref

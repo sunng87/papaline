@@ -6,15 +6,13 @@
 (deftest test-stage
   (let [f (fn [arg])
         realized-stage (stage f)]
-    (is (= 2 (count realized-stage)))
-    (is (fn? (first realized-stage)))))
+    (is (fn? (.stage-fn realized-stage)))))
 
 (deftest test-pipeline
   (let [f (take 5 (repeat (fn [c] (swap! c inc))))
         stgs (map stage f)
         ppl (pipeline stgs)]
-    (is (= 3 (count ppl)))
-    (is (fn? (first ppl)))))
+    (is (fn? (.entry-fn ppl)))))
 
 (deftest test-run-pipeline
   (let [c0 (atom 0)

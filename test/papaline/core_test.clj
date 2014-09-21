@@ -5,14 +5,14 @@
 
 (deftest test-stage
   (let [f (fn [arg])
-        realized-stage (stage f)]
-    (is (fn? (.stage-fn realized-stage)))))
+        the-stage (stage f)]
+    (is (fn? (.stage-fn the-stage)))))
 
 (deftest test-pipeline
   (let [f (take 5 (repeat (fn [c] (swap! c inc))))
         stgs (map stage f)
         ppl (pipeline stgs)]
-    (is (fn? (.entry-fn ppl)))))
+    (is (instance? clojure.lang.IFn ppl))))
 
 (deftest test-run-pipeline
   (let [c0 (atom 0)

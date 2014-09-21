@@ -5,7 +5,14 @@
                        pipeline]]))
 
 (defrecord Stage [buffer-factory stage-fn])
-(defrecord RealizedStage [buffer stage-fn])
+
+(defrecord RealizedStage [buffer stage-fn]
+  clojure.lang.IFn
+  (applyTo [this args]
+    (apply stage-fn args)))
+
+(defn start-stage [s]
+  (RealizedStage. ((.buffer-factory s)) (.stage-fn s)))
 
 (defn stage [stage-fn & {:keys [in-chan
                                 buffer-size
@@ -24,14 +31,16 @@
               args)]
     (apply stage sfn options)))
 
-(defrecord Pipeline [entry-fn done-chan stages])
+(defrecord Pipeline [done-chan stages]
+  clojure.lang.IFn
+  (invoke [this ctx]
+    (let [entry (-> stages first (.buffer))]
+      (go
+        (>! entry ctx)))))
 
 (defn pipeline [stages & {:keys [error-handler]}]
   (let [stages (mapv #(if (fn? %) (stage %) %) stages)
-        realized-stages (mapv #(RealizedStage. ((.buffer-factory %))
-                                               (.stage-fn %))
-                              stages)
-        entry (-> realized-stages first (.buffer))
+        realized-stages (mapv start-stage stages)
         done-chan (chan)]
     (loop [stages* realized-stages]
       (when (first stages*)
@@ -88,21 +97,17 @@
                          (recur))
                        (close! in-chan))))
           (recur (rest stages*)))))
-    (Pipeline. (fn [call-info]
-                 (go
-                   (>! entry call-info)))
-               done-chan
-               realized-stages)))
+    (Pipeline. done-chan realized-stages)))
 
 (defn run-pipeline [pipeline & args]
-  ((.entry-fn pipeline) {:args args}))
+  (pipeline {:args args}))
 
 (defn run-pipeline-wait [pipeline & args]
   (let [sync-chan (chan)
         error-chan (chan)]
-    ((.entry-fn pipeline) {:args args
-                           :wait sync-chan
-                           :error error-chan})
+    (pipeline {:args args
+               :wait sync-chan
+               :error error-chan})
     (let [done-chan (.done-chan pipeline)
           [result port] (alts!! [done-chan error-chan sync-chan] :priority true)]
       (condp = port
@@ -114,9 +119,9 @@
   (let [sync-chan (chan)
         error-chan (chan)
         timeout-chan (timeout timeout-interval)]
-    ((.entry-fn pipeline) {:args args
-                           :wait sync-chan
-                           :error error-chan})
+    (pipeline {:args args
+               :wait sync-chan
+               :error error-chan})
     (let [done-chan (.done-chan pipeline)
           [result port] (alts!! [done-chan timeout-chan error-chan sync-chan] :priority true)]
       (condp = port

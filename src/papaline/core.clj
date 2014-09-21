@@ -2,7 +2,8 @@
   (:require [clojure.core.async :as a
              :refer :all
              :exclude [partition-by map into reduce partition take merge
-                       pipeline]]))
+                       pipeline]]
+            [papaline.util :refer [defprotocol+]]))
 
 (defrecord Stage [buffer-factory stage-fn])
 
@@ -31,11 +32,11 @@
               args)]
     (apply stage sfn options)))
 
-(defprotocol IPipeline
+(defprotocol+ IPipeline
   (start! [this])
-  (run-pipeline* [this args])
-  (run-pipeline-wait* [this args])
-  (run-pipeline-timeout* [this timeout-interval timeout-val args])
+  (run-pipeline [this & args])
+  (run-pipeline-wait [this & args])
+  (run-pipeline-timeout [this timeout-interval timeout-val & args])
   (stop! [this]))
 
 (defrecord Pipeline [done-chan stages error-handler]
@@ -140,15 +141,6 @@
         done-chan (chan)]
     (doto (Pipeline. done-chan realized-stages error-handler)
       (start!))))
-
-(defn run-pipeline [pipeline & args]
-  (run-pipeline* pipeline args))
-
-(defn run-pipeline-wait [pipeline & args]
-  (run-pipeline-wait* pipeline args))
-
-(defn run-pipeline-timeout [pipeline timeout-interval timeout-var & args]
-  (run-pipeline-timeout* pipeline timeout-interval timeout-var args))
 
 (defn pipeline-stage
   "pipeline as a stage"

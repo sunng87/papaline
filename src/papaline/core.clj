@@ -3,7 +3,7 @@
              :refer :all
              :exclude [partition-by map into reduce partition take merge
                        pipeline]]
-            [papaline.util :refer [defprotocol+]]))
+            [papaline.util :refer [defprotocol+ defrecord+]]))
 
 (defrecord Stage [buffer-factory stage-fn])
 
@@ -39,7 +39,7 @@
   (run-pipeline-timeout [this timeout-interval timeout-val & args])
   (stop! [this]))
 
-(defrecord Pipeline [done-chan stages error-handler]
+(defrecord+ Pipeline [done-chan stages error-handler]
   clojure.lang.IFn
   (invoke [this ctx]
     (let [entry (-> stages first (.buffer))]
@@ -104,10 +104,10 @@
                 (close! in-chan))))
           (recur (rest stages*))))))
 
-  (run-pipeline* [this args]
+  (run-pipeline [this & args]
     (this {:args args}))
 
-  (run-pipeline-wait* [this args]
+  (run-pipeline-wait [this & args]
     (let [sync-chan (chan)
           error-chan (chan)]
       (this {:args args
@@ -119,7 +119,7 @@
           error-chan (throw result)
           done-chan (throw (ex-info "Pipeline closed"))))))
 
-  (run-pipeline-timeout* [this timeout-interval timeout-val args]
+  (run-pipeline-timeout [this timeout-interval timeout-val & args]
     (let [sync-chan (chan)
           error-chan (chan)
           timeout-chan (timeout timeout-interval)]

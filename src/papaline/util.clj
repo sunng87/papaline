@@ -18,3 +18,29 @@
                      [n a] original-spec]
                  (list 'defn n a
                        (apply list prot-func prot-args))) vararg-funcs))))
+
+(defmacro defrecord+ [name & forms]
+  `(defrecord ~name
+       ~@(map #(if (list? %)
+                 (let [[n a & forms] %
+                       vararg-sym (symbol "&")]
+                   (if (.contains a vararg-sym)
+                     (apply list
+                            (symbol (str n "*"))
+                            (vec (remove (fn [_a] (= _a vararg-sym)) a))
+                            forms)
+                     %))
+                 %) forms)))
+
+(defmacro deftype+ [name & forms]
+  `(deftype ~name
+       ~@(map #(if (list? %)
+                 (let [[n a & forms] %
+                       vararg-sym (symbol "&")]
+                   (if (.contains a vararg-sym)
+                     (apply list
+                            (symbol (str n "*"))
+                            (vec (remove (fn [_a] (= _a vararg-sym)) a))
+                            forms)
+                     %))
+                 %) forms)))

@@ -85,16 +85,24 @@
 
 (deftest test-error-handler-sync
   (let [e (atom 0)
-        f (fn [] (throw (ex-info "expected error.")))
-        p (pipeline [f] :error-handler (fn [_ _] (swap! e inc)))]
+        f (fn [] (throw (ex-info "expected error." {})))
+        p (pipeline [f] :error-handler (fn [_] (swap! e inc)))]
     (try (run-pipeline-wait p) (catch Exception e))
     (is (= 1 @e))))
 
 (deftest test-error-handler-async
   (let [e (atom 0)
         sync (chan)
-        f (fn [] (throw (ex-info "expected error")))
-        p (pipeline [f] :error-handler (fn [_ _] (swap! e inc) (>!! sync 1)))]
+        f (fn [] (throw (ex-info "expected error" {})))
+        p (pipeline [f] :error-handler (fn [_] (swap! e inc) (>!! sync 1)))]
     (run-pipeline p)
     (<!! sync)
     (is (= 1 @e))))
+
+(deftest test-error-handler-with-name
+  (let [stage-name "demo-stage-0"
+        f (named-stage stage-name (fn [] (throw (ex-info "expected error" {}))))
+        p (pipeline [f] :error-handler (fn [e]
+                                   (let [data (ex-data e)]
+                                     (is (= stage-name (:stage data))))))]
+    (try (run-pipeline-wait p) (catch Exception e))))

@@ -7,13 +7,13 @@
 
 (defrecord Stage [buffer-factory stage-fn])
 
-(defrecord RealizedStage [buffer stage-fn]
+(defrecord RealizedStage [buffer stage-fn name]
   clojure.lang.IFn
   (applyTo [this args]
     (apply stage-fn args)))
 
 (defn start-stage [s]
-  (RealizedStage. ((.buffer-factory s)) (.stage-fn s)))
+  (RealizedStage. ((.buffer-factory s)) (.stage-fn s) (:name s)))
 
 (defn stage [stage-fn & {:keys [in-chan
                                 buffer-size
@@ -25,6 +25,9 @@
                     buffer)
         buffer-factory #(chan (buffer-fn buffer-size))]
     (Stage. buffer-factory stage-fn)))
+
+(defn named-stage [name & args]
+  (assoc (apply stage args) :name name))
 
 (defn copy-stage [stage-fn & options]
   (let [sfn (fn [& args]
@@ -50,27 +53,30 @@
   (start! [this]
     (loop [stages* stages]
       (when (first stages*)
-        (let [in-chan (.buffer (first stages*))
-              task (.stage-fn (first stages*))
+        (let [current-stage (first stages*)
+              in-chan (.buffer current-stage)
+              task (.stage-fn current-stage)
               out-chan (when (second stages*) (.buffer (second stages*)))]
           (go-loop []
             (let [[ctx port] (alts! [done-chan in-chan] :priority true)]
               (if (not= port done-chan)
                 (do
                   (go
-                    (let [ctx (try
-                                (let [args (:args ctx)
-                                      args (if (or (nil? args) ;; empty arguments
-                                                   (sequential? args))
-                                             args [args])]
-                                  (assoc ctx :args (apply task args)))
+                    (let [args (:args ctx)
+                          args (if (or (nil? args) ;; empty arguments
+                                       (sequential? args))
+                                 args [args])
+                          ctx (try
+                                (assoc ctx :args (apply task args))
                                 (catch Exception e
                                   (if (and (instance? clojure.lang.ExceptionInfo e)
                                            (:abort (ex-data e)))
                                     (merge ctx (ex-data e))
                                     (do
                                       (when error-handler
-                                        (error-handler e (:args ctx)))
+                                        (error-handler (ex-info "Papaline stage error"
+                                                                {:args args
+                                                                 :stage (:name current-stage)} e)))
                                       (when (:error ctx)
                                         (>! (:error ctx) e))))))
                           out-chan (or out-chan (:wait ctx))]

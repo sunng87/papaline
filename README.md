@@ -1,6 +1,9 @@
 # papaline
 
-Clojure concurrent pipeline on core.async
+Clojure concurrent pipeline on
+[core.async](https://github.com/clojure/core.async).
+
+[![Build Status](https://travis-ci.org/sunng87/papaline.png?branch=master)](https://travis-ci.org/sunng87/papaline)
 
 ## What is a pipeline ?
 

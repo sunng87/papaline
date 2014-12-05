@@ -163,15 +163,13 @@ arguments.
 ```clojure
 (pipeline
   (map stage [save-msg query-followers fan-out-to-redis])
-  :error-handler (fn [e args]
+  :error-handler (fn [e]
     ;; logging...
-    ))
+    (logging/warn e "error" (ex-data e)))
 ```
 
-Currently we don't information about the exact stage which the
-exception is produced because we don't have metadata for stages. If
-you need stage specific error handler, it's better to do try-catch in
-the stage function.
+If you are using `named-stage` to define the stage, the name will be
+available as `:stage` in `ex-data`.
 
 For synchronous call like `(run-pipeline-wait)` and
 `(run-pipeline-timeout)`, the exception will be thrown to caller

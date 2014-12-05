@@ -106,3 +106,6 @@
                     (fn [e]
                       (is (= stage-name (:stage (ex-data e))))))]
     (try (run-pipeline-wait p) (catch Exception e))))
+
+(deftest test-stage-invokable
+  (is (= 2 ((stage inc) [1]))))

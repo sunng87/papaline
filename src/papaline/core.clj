@@ -5,7 +5,10 @@
                        pipeline]]
             [papaline.util :refer [defprotocol+ defrecord+]]))
 
-(defrecord Stage [buffer-factory stage-fn])
+(defrecord Stage [buffer-factory stage-fn]
+  clojure.lang.IFn
+  (invoke [this args]
+    (apply stage-fn args)))
 
 (defrecord RealizedStage [buffer stage-fn name]
   clojure.lang.IFn

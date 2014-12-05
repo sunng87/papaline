@@ -64,12 +64,22 @@ A pipeline is an ordered sequence of stages.
 
 ```
 
+You can also give stage a name by `named-stage`. The name will be
+available from `error-handler` so you can log which stage is having
+issue.
+
+```clojure
+;; you can also make a macro for this
+(named-stage "fan-out-to-redis" fan-out-to-redis)
+```
+
 Run the pipeline
 
 ```clojure
 (run-pipeline save-status
   "userid"
-  "Putin orders to approve draft bill on integration of #Crimea into Russia http://on.rt.com/xhz2zu")
+  "Putin orders to approve draft bill on integration of #Crimea into
+Russia http://on.rt.com/xhz2zu")
 ```
 
 Run pipeline and wait for the results

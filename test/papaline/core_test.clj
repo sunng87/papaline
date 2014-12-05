@@ -102,7 +102,7 @@
 (deftest test-error-handler-with-name
   (let [stage-name "demo-stage-0"
         f (named-stage stage-name (fn [] (throw (ex-info "expected error" {}))))
-        p (pipeline [f] :error-handler (fn [e]
-                                   (let [data (ex-data e)]
-                                     (is (= stage-name (:stage data))))))]
+        p (pipeline [f] :error-handler
+                    (fn [e]
+                      (is (= stage-name (:stage (ex-data e))))))]
     (try (run-pipeline-wait p) (catch Exception e))))

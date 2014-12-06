@@ -12,8 +12,24 @@
 
 (defrecord RealizedStage [buffer stage-fn name]
   clojure.lang.IFn
-  (applyTo [this args]
-    (apply stage-fn args)))
+  (invoke [this ctx error-handler]
+    (let [task stage-fn
+          args (:args ctx)
+          args (if (or (nil? args) ;; empty arguments
+                       (sequential? args))
+                 args [args])]
+      (try
+        (assoc ctx :args (apply task args))
+        (catch Exception e
+          (if (and (instance? clojure.lang.ExceptionInfo e)
+                   (:abort (ex-data e)))
+            (merge ctx (ex-data e))
+            (let [ex (ex-info "Papaline stage error"
+                              {:args args
+                               :stage name} e)]
+              (when error-handler
+                (error-handler ex))
+              (assoc ctx :ex ex))))))))
 
 (defn start-stage [s]
   (RealizedStage. ((.buffer-factory s)) (.stage-fn s) (:name s)))
@@ -46,23 +62,7 @@
   (stop! [this]))
 
 (defn- run-task [current-stage ctx error-handler]
-  (let [task (.stage-fn current-stage)
-        args (:args ctx)
-        args (if (or (nil? args) ;; empty arguments
-                     (sequential? args))
-               args [args])]
-    (try
-      (assoc ctx :args (apply task args))
-      (catch Exception e
-        (if (and (instance? clojure.lang.ExceptionInfo e)
-                 (:abort (ex-data e)))
-          (merge ctx (ex-data e))
-          (let [ex (ex-info "Papaline stage error"
-                            {:args args
-                             :stage (:name current-stage)} e)]
-            (when error-handler
-              (error-handler ex))
-            (assoc ctx :ex ex)))))))
+  (current-stage ctx error-handler))
 
 (defrecord+ Pipeline [done-chan stages error-handler]
   clojure.lang.IFn

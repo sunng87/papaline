@@ -6,7 +6,7 @@
 (deftest test-stage
   (let [f (fn [arg])
         the-stage (stage f)]
-    (is (fn? (.stage-fn the-stage)))))
+    (is (fn? (.stage-fn (start-stage the-stage))))))
 
 (deftest test-pipeline
   (let [f (take 5 (repeat (fn [c] (swap! c inc))))
@@ -101,11 +101,16 @@
 
 (deftest test-error-handler-with-name
   (let [stage-name "demo-stage-0"
-        f (named-stage stage-name (fn [] (throw (ex-info "expected error" {}))))
+        f (stage (fn [] (throw (ex-info "expected error" {})))
+                 :name stage-name )
         p (pipeline [f] :error-handler
                     (fn [e]
                       (is (= stage-name (:stage (ex-data e))))))]
     (try (run-pipeline-wait p) (catch Exception e))))
 
-(deftest test-stage-invokable
-  (is (= 2 ((stage inc) [1]))))
+(deftest test-parallel-stage
+  (let [s (start-stage (pstage [inc inc inc] :completion :any))]
+    (is (= 2 (:args (s {:args [1]} nil)))))
+  (let [s (start-stage (pstage [inc inc inc]
+                               :completion :all :merger identity))]
+    (is (= [2 2 2] (mapv :args (s {:args [1]} nil))))))

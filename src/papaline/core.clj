@@ -5,19 +5,11 @@
                        pipeline]]
             [papaline.util :refer [defprotocol+ defrecord+]]))
 
-(defrecord Stage [buffer-factory stage-fn]
-  clojure.lang.IFn
-  (invoke [this args]
-    (apply stage-fn args)))
-
-(defrecord RealizedStage [buffer stage-fn name]
-  clojure.lang.IFn
-  (invoke [this ctx error-handler]
-    (let [task stage-fn
-          args (:args ctx)
-          args (if (or (nil? args) ;; empty arguments
-                       (sequential? args))
-                 args [args])]
+(defn- run-task [task name ctx error-handler]
+  (let [args (:args ctx)
+        args (if (or (nil? args) ;; empty arguments
+                     (sequential? args))
+               args [args])]
       (try
         (assoc ctx :args (apply task args))
         (catch Exception e
@@ -29,24 +21,46 @@
                                :stage name} e)]
               (when error-handler
                 (error-handler ex))
-              (assoc ctx :ex ex))))))))
+              (assoc ctx :ex ex)))))))
+
+(defrecord RealizedStage [buffer stage-fn name]
+  clojure.lang.IFn
+  (invoke [this ctx error-handler]
+    (run-task stage-fn name ctx error-handler)))
+
+(defrecord RealizedParallelStage [buffer stage-fns completion merger name]
+  clojure.lang.IFn
+  (invoke [this ctx error-handler]
+    (let [chans (doall (map-indexed
+                        #(go (run-task %2 (str name "-" %1) ctx error-handler))
+                        stage-fns))]
+      (case completion
+        :any (let [[r _] (alts!! chans)] r)
+        ;; TODO, don't expose internal ctx to user
+        :all (merger (mapv #(<!! %) chans))))))
 
 (defn start-stage [s]
-  (RealizedStage. ((.buffer-factory s)) (.stage-fn s) (:name s)))
+  (if (sequential? (:fn s))
+    (RealizedParallelStage. ((:buffer-factory s))
+                            (:fn s)
+                            (:completion s)
+                            (:merger s)
+                            (:name s))
+    (RealizedStage. ((:buffer-factory s)) (:fn s) (:name s))))
 
 (defn stage [stage-fn & {:keys [in-chan
                                 buffer-size
-                                buffer-type]
+                                buffer-type
+                                name]
                          :or {buffer-size 100}}]
   (let [buffer-fn (case buffer-type
                     :sliding sliding-buffer
                     :dropping dropping-buffer
                     buffer)
         buffer-factory #(chan (buffer-fn buffer-size))]
-    (Stage. buffer-factory stage-fn)))
-
-(defn named-stage [name & args]
-  (assoc (apply stage args) :name name))
+    {:name name
+     :buffer-factory buffer-factory
+     :fn stage-fn}))
 
 (defn copy-stage [stage-fn & options]
   (let [sfn (fn [& args]
@@ -54,15 +68,18 @@
               args)]
     (apply stage sfn options)))
 
+(defn pstage [fns & opts]
+  (let [{:keys [merger completion]} opts]
+    (assoc (apply stage fns opts)
+      :merger merger
+      :completion completion)))
+
 (defprotocol+ IPipeline
   (start! [this])
   (run-pipeline [this & args])
   (run-pipeline-wait [this & args])
   (run-pipeline-timeout [this timeout-interval timeout-val & args])
   (stop! [this]))
-
-(defn- run-task [current-stage ctx error-handler]
-  (current-stage ctx error-handler))
 
 (defrecord+ Pipeline [done-chan stages error-handler]
   clojure.lang.IFn
@@ -83,7 +100,7 @@
                     (if (not= port done-chan)
                       (do
                         (go
-                          (let [ctx (run-task current-stage ctx error-handler)
+                          (let [ctx (current-stage ctx error-handler)
                                 out-chan (or out-chan (:wait ctx))]
                             (when (and (:error ctx) (:ex ctx))
                               (>! (:error ctx) (:ex ctx)))

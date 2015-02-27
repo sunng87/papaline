@@ -77,8 +77,13 @@
   (let [c0 (atom 0)
         stg0 (fn [c] (abort))
         stg1 (fn [c] (swap! c inc))
-        ppl (pipeline (map stage [stg0 stg1]))]
+        ppl (pipeline (map stage [stg0 stg1]))
+        ppl2 (dedicated-thread-pool-pipeline (map stage [stg0 stg1])
+                                            (make-thread-pool 2 2))]
     (run-pipeline-wait ppl c0)
+    (is (= 0 @c0))
+
+    (run-pipeline-wait ppl2 c0)
     (is (= 0 @c0))))
 
 (deftest test-fork-join

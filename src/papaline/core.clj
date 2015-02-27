@@ -152,13 +152,17 @@
   (stop! [this]
          (>!! done-chan 0)))
 
-(defrecord+ DedicatedThreadPoolPipeline [executor stage-fn-chain error-handler]
+(defrecord+ DedicatedThreadPoolPipeline [executor stages error-handler]
   clojure.lang.IFn
   (invoke [this ctx]
           (let [clos (fn []
-                       (try (apply stage-fn-chain (:args ctx))
-                            (catch Exception e
-                              (when error-handler (error-handler e)))))]
+                       (loop [stgs stages ctx ctx]
+                         (if-let [s (first stgs)]
+                           (let [ctx (run-task s ctx error-handler)]
+                             (if (:abort ctx)
+                               ctx
+                               (recur (rest stgs) ctx)))
+                           ctx)))]
             (.submit ^ExecutorService executor ^Runnable clos)))
 
   IPipeline
@@ -169,12 +173,12 @@
 
   (run-pipeline-wait [this & args]
                      (let [future (this {:args args})]
-                       (.get future)))
+                       (:args (.get future))))
 
   (run-pipeline-timeout [this timeout-interval timeout-val & args]
                         (let [future (this {:args args})]
                           (try
-                            (.get future timeout-interval TimeUnit/MILLISECONDS)
+                            (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
                             (catch TimeoutException e
                               timeout-val))))
   (stop! [this]))
@@ -205,12 +209,7 @@
                        ^RejectedExecutionHandler overflow-action))
 
 (defn dedicated-thread-pool-pipeline [stages thread-pool & {:keys [error-handler]}]
-  (let [stages-fn-chain (fn [& args]
-                          (loop [stgs (map :stage-fn stages) r args]
-                            (if-let [s (first stgs)]
-                              (recur (rest stgs) (apply s r))
-                              r)))]
-    (DedicatedThreadPoolPipeline. thread-pool stages-fn-chain error-handler)))
+  (DedicatedThreadPoolPipeline. thread-pool stages error-handler))
 
 (deftype MetadataObj [val meta-map-wrapper]
   clojure.lang.IDeref

@@ -26,6 +26,19 @@
     (<!! sync-chan)
     (is (= num @c0))))
 
+(deftest test-run-threadpool-pipeline
+  (let [c0 (atom 0)
+        sync-chan (chan)
+        num 5
+        executor (make-thread-pool 2 2)
+        f (vec (take num (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan]))))
+        f (conj f (fn [c sync-chan] (>!! sync-chan 0)))
+        stgs (map stage f)
+        ppl (dedicated-thread-pool-pipeline stgs executor)]
+    (run-pipeline ppl c0 sync-chan)
+    (<!! sync-chan)
+    (is (= num @c0))))
+
 (deftest test-copy-stage
   (let [c0 (atom 0)
         sync-chan (chan)
@@ -64,7 +77,7 @@
   (let [c0 (atom 0)
         stg0 (fn [c] (abort))
         stg1 (fn [c] (swap! c inc))
-        ppl (pipeline [stg0 stg1])]
+        ppl (pipeline (map stage [stg0 stg1]))]
     (run-pipeline-wait ppl c0)
     (is (= 0 @c0))))
 
@@ -73,20 +86,20 @@
         join-inc-stage (fn [i] (join (inc i)))
         combine-stage (fn [& l] (reduce + l))]
     (is (= 10 (run-pipeline-wait
-               (pipeline [fork-stage join-inc-stage combine-stage]))))
+               (pipeline (map stage [fork-stage join-inc-stage combine-stage])))))
     (is (= [2 2 2 2 2]
            (run-pipeline-wait
-            (pipeline [fork-stage join-inc-stage]))))))
+            (pipeline (map stage [fork-stage join-inc-stage])))))))
 
 (deftest test-args-auto-vec
   (let [fff (fn [] 1)
         ff2 (fn [a] (inc a))]
-    (is (= 2 (run-pipeline-wait (pipeline [fff ff2]))))))
+    (is (= 2 (run-pipeline-wait (pipeline (map stage [fff ff2])))))))
 
 (deftest test-error-handler-sync
   (let [e (atom 0)
         f (fn [] (throw (ex-info "expected error." {})))
-        p (pipeline [f] :error-handler (fn [_] (swap! e inc)))]
+        p (pipeline (map stage [f]) :error-handler (fn [_] (swap! e inc)))]
     (try (run-pipeline-wait p) (catch Exception e))
     (is (= 1 @e))))
 
@@ -94,7 +107,7 @@
   (let [e (atom 0)
         sync (chan)
         f (fn [] (throw (ex-info "expected error" {})))
-        p (pipeline [f] :error-handler (fn [_] (swap! e inc) (>!! sync 1)))]
+        p (pipeline (map stage [f]) :error-handler (fn [_] (swap! e inc) (>!! sync 1)))]
     (run-pipeline p)
     (<!! sync)
     (is (= 1 @e))))

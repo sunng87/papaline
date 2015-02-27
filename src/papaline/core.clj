@@ -3,7 +3,10 @@
              :refer :all
              :exclude [partition-by map into reduce partition take merge
                        pipeline]]
-            [papaline.util :refer [defprotocol+ defrecord+]]))
+            [papaline.util :refer [defprotocol+ defrecord+]])
+  (:import [java.util.concurrent ExecutorService TimeUnit TimeoutException
+            ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
+            ThreadPoolExecutor$DiscardOldestPolicy]))
 
 (defrecord Stage [buffer-factory stage-fn]
   clojure.lang.IFn
@@ -149,9 +152,35 @@
   (stop! [this]
          (>!! done-chan 0)))
 
+(defrecord+ DedicatedThreadPoolPipeline [executor stage-fn-chain error-handler]
+  clojure.lang.IFn
+  (invoke [this ctx]
+          (let [clos (fn []
+                       (try (apply stage-fn-chain (:args ctx))
+                            (catch Exception e
+                              (when error-handler (error-handler e)))))]
+            (.submit ^ExecutorService executor ^Runnable clos)))
+
+  IPipeline
+  (start! [this])
+
+  (run-pipeline [this & args]
+                (this {:args args}))
+
+  (run-pipeline-wait [this & args]
+                     (let [future (this {:args args})]
+                       (.get future)))
+
+  (run-pipeline-timeout [this timeout-interval timeout-val & args]
+                        (let [future (this {:args args})]
+                          (try
+                            (.get future timeout-interval TimeUnit/MILLISECONDS)
+                            (catch TimeoutException e
+                              timeout-val))))
+  (stop! [this]))
+
 (defn pipeline [stages & {:keys [error-handler]}]
-  (let [stages (mapv #(if (fn? %) (stage %) %) stages)
-        realized-stages (mapv start-stage stages)
+  (let [realized-stages (mapv start-stage stages)
         done-chan (chan)]
     (doto (Pipeline. done-chan realized-stages error-handler)
       (start!))))
@@ -167,6 +196,21 @@
 
 (defn cancel-pipeline [pipeline]
   (stop! pipeline))
+
+(defn make-thread-pool [threads queue-size & {:keys [overflow-action]
+                                              :or {overflow-action (ThreadPoolExecutor$DiscardOldestPolicy.)}}]
+  (ThreadPoolExecutor. (int threads) (int threads) (long 0)
+                       TimeUnit/MILLISECONDS
+                       (LinkedBlockingQueue. queue-size)
+                       ^RejectedExecutionHandler overflow-action))
+
+(defn dedicated-thread-pool-pipeline [stages thread-pool & {:keys [error-handler]}]
+  (let [stages-fn-chain (fn [& args]
+                          (loop [stgs (map :stage-fn stages) r args]
+                            (if-let [s (first stgs)]
+                              (recur (rest stgs) (apply s r))
+                              r)))]
+    (DedicatedThreadPoolPipeline. thread-pool stages-fn-chain error-handler)))
 
 (deftype MetadataObj [val meta-map-wrapper]
   clojure.lang.IDeref

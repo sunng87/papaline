@@ -4,7 +4,7 @@
              :exclude [partition-by map into reduce partition take merge
                        pipeline]]
             [papaline.util :refer [defprotocol+ defrecord+]])
-  (:import [java.util.concurrent ExecutorService TimeUnit TimeoutException
+  (:import [java.util.concurrent ExecutorService TimeUnit TimeoutException Callable
             ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
             ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory]))
 
@@ -163,7 +163,7 @@
                                ctx
                                (recur (rest stgs) ctx)))
                            ctx)))]
-            (.submit ^ExecutorService executor ^Runnable clos)))
+            (.submit ^ExecutorService executor ^Callable clos)))
 
   IPipeline
   (start! [this])

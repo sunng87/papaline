@@ -6,7 +6,7 @@
             [papaline.util :refer [defprotocol+ defrecord+]])
   (:import [java.util.concurrent ExecutorService TimeUnit TimeoutException
             ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
-            ThreadPoolExecutor$DiscardOldestPolicy]))
+            ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory]))
 
 (defrecord Stage [buffer-factory stage-fn]
   clojure.lang.IFn
@@ -201,11 +201,22 @@
 (defn cancel-pipeline [pipeline]
   (stop! pipeline))
 
+(defn counted-thread-factory
+  [name-format daemon]
+  (let [counter (atom 0)]
+    (reify
+      ThreadFactory
+      (newThread [this runnable]
+        (doto (Thread. runnable)
+          (.setName (format name-format (swap! counter inc)))
+          (.setDaemon daemon))))))
+
 (defn make-thread-pool [threads queue-size & {:keys [overflow-action]
                                               :or {overflow-action (ThreadPoolExecutor$DiscardOldestPolicy.)}}]
   (ThreadPoolExecutor. (int threads) (int threads) (long 0)
                        TimeUnit/MILLISECONDS
                        (LinkedBlockingQueue. queue-size)
+                       (counted-thread-factory "papaline-pool-%d" true)
                        ^RejectedExecutionHandler overflow-action))
 
 (defn dedicated-thread-pool-pipeline [stages thread-pool & {:keys [error-handler]}]

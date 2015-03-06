@@ -159,9 +159,13 @@
                        (loop [stgs stages ctx ctx]
                          (if-let [s (first stgs)]
                            (let [ctx (run-task s ctx error-handler)]
-                             (if (:abort ctx)
-                               ctx
-                               (recur (rest stgs) ctx)))
+                             (cond
+                               (:abort ctx) ctx
+                               (:fork (meta (:args ctx)))
+                               (error-handler (UnsupportedOperationException. "Fork is not supported in DedicatedThreadPoolPipeline"))
+                               (:join (meta (:args ctx)))
+                               (error-handler (UnsupportedOperationException. "Join is not supported in DedicatedThreadPoolPipeline"))
+                               :else (recur (rest stgs) ctx)))
                            ctx)))]
             (.submit ^ExecutorService executor ^Callable clos)))
 

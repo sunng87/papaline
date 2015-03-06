@@ -127,3 +127,16 @@
 
 (deftest test-stage-invokable
   (is (= 2 ((stage inc) [1]))))
+
+(deftest test-fork-join-in-dedicated-threadpool-pipeline
+  (testing "dedicated thread pool doesn't accept (fork) and (join) result, error expected"
+    (let [mark (atom 0)
+          t (make-thread-pool 2 2)
+          f (named-stage "demo-stage-0" (fn [] (fork (range 10))))
+          p (dedicated-thread-pool-pipeline [f] t
+                                            :error-handler
+                                            (fn [e]
+                                              (is (instance? UnsupportedOperationException e))
+                                              (swap! mark inc)))]
+      (run-pipeline-wait p)
+      (is (= 1 @mark)))))

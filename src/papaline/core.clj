@@ -248,7 +248,7 @@
 
 (defn abort
   ([] (throw (ex-info "Aborted" {:abort true})))
-  ([ret] (throw (ex-info "Aborted" {:abort true :ret ret}))))
+  ([ret] (throw #break (ex-info "Aborted" {:abort true :args ret}))))
 
 (defn fork [ret]
   (when-not (sequential? ret)

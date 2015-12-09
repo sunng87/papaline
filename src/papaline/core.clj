@@ -4,7 +4,8 @@
              :exclude [partition-by map into reduce partition take merge
                        pipeline]]
             [papaline.util :refer [defprotocol+ defrecord+]])
-  (:import [java.util.concurrent ExecutorService TimeUnit TimeoutException Callable
+  (:import [papaline.concurrent ArgumentsAwareCallable]
+           [java.util.concurrent ExecutorService TimeUnit TimeoutException Callable
             ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
             ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory]))
 
@@ -166,8 +167,12 @@
                                (:join (meta (:args ctx)))
                                (error-handler (UnsupportedOperationException. "Join is not supported in DedicatedThreadPoolPipeline"))
                                :else (recur (rest stgs) ctx)))
-                           ctx)))]
-            (.submit ^ExecutorService executor ^Callable clos)))
+                           ctx)))
+                clos-wrapper (ArgumentsAwareCallable. ^Callable clos
+                                                      (if (not-empty (:args ctx))
+                                                        (.toArray ^clojure.lang.ArraySeq (:args ctx))
+                                                        (into-array [])))]
+            (.submit ^ExecutorService executor ^Callable clos-wrapper)))
 
   IPipeline
   (start! [this])

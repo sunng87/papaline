@@ -42,6 +42,9 @@
               args)]
     (apply stage sfn options)))
 
+(def ^:dynamic *pre-execution-hook* nil)
+(def ^:dynamic *post-execution-hook* nil)
+
 (defprotocol+ IPipeline
   (start! [this])
   (run-pipeline [this & args])
@@ -73,7 +76,9 @@
   (invoke [this ctx]
           (let [entry (-> stages first (.buffer))]
             (go
-              (>! entry ctx))))
+              (when *pre-execution-hook*
+                (*pre-execution-hook* ctx))
+              (>! entry (assoc ctx :post-hook *post-execution-hook*)))))
 
   IPipeline
   (start! [this]
@@ -87,14 +92,18 @@
                     (if (not= port done-chan)
                       (do
                         (go
-                          (let [ctx (run-task current-stage ctx error-handler)
-                                out-chan (or out-chan (:wait ctx))]
+                          (let [ctx (run-task current-stage ctx error-handler)]
                             (when (and (:error ctx) (:ex ctx))
                               (>! (:error ctx) (:ex ctx)))
-                            (when out-chan
+                            (when-not out-chan
+                              (when-let [post-hook (:post-hook ctx)]
+                                (post-hook ctx)))
+                            (when-let [out-chan (or out-chan (:wait ctx))]
                               (cond
                                (:abort ctx)
-                               (when (:wait ctx) (>! (:wait ctx) ctx))
+                               (do
+                                 (when (:wait ctx) (>! (:wait ctx) ctx))
+                                 (when-let [post-hook (:post-hook ctx)] (post-hook ctx)))
 
                                ;; the results are forked
                                (:fork (meta (:args ctx)))
@@ -116,8 +125,7 @@
                                                   :fork-rets (vec (drop-last (:fork-rets ctx)))))))
 
                                ;; normal linear
-                               :else (>! out-chan ctx))
-                              )))
+                               :else (>! out-chan ctx)))))
                         (recur))
                       (close! in-chan))))
                 (recur (rest stages*))))))
@@ -156,18 +164,28 @@
 (defrecord+ DedicatedThreadPoolPipeline [executor stages error-handler]
   clojure.lang.IFn
   (invoke [this ctx]
-          (let [clos (fn []
+          (let [pre-hook *pre-execution-hook*
+                post-hook *post-execution-hook*
+                clos (fn []
+                       (when pre-hook (pre-hook ctx))
                        (loop [stgs stages ctx ctx]
                          (if-let [s (first stgs)]
                            (let [ctx (run-task s ctx error-handler)]
                              (cond
-                               (:abort ctx) ctx
+                               (:abort ctx)
+                               (do
+                                 (when post-hook (post-hook ctx))
+                                 ctx)
+
                                (:fork (meta (:args ctx)))
                                (error-handler (UnsupportedOperationException. "Fork is not supported in DedicatedThreadPoolPipeline"))
+
                                (:join (meta (:args ctx)))
                                (error-handler (UnsupportedOperationException. "Join is not supported in DedicatedThreadPoolPipeline"))
                                :else (recur (rest stgs) ctx)))
-                           ctx)))
+                           (do
+                             (when post-hook (post-hook ctx))
+                             ctx))))
                 clos-wrapper (ArgumentsAwareCallable. ^Callable clos
                                                       (if (not-empty (:args ctx))
                                                         (.toArray ^clojure.lang.ArraySeq (:args ctx))
@@ -230,6 +248,46 @@
 
 (defn dedicated-thread-pool-pipeline [stages thread-pool & {:keys [error-handler]}]
   (DedicatedThreadPoolPipeline. thread-pool stages error-handler))
+
+(defrecord+ CompoundPipeline [pipelines]
+  clojure.lang.IFn
+  (invoke [this ctx]
+    (loop [ps pipelines ctx ctx]
+      (if-let [p (first ps)]
+        ;; FIXME: do not block here
+        (let [ctx (apply run-pipeline-wait p (:args ctx))]
+          (cond
+            (:abort ctx) ctx
+            (:ex ctx) ctx
+            (:fork (meta (:args ctx)))
+            (error-handler (UnsupportedOperationException.
+                            "Fork is not supported for now"))
+            (:join (meta (:args ctx)))
+            (error-handler (UnsupportedOperationException.
+                            "Join is not supported for now "))
+            :else (recur (rest ps) ctx)))
+        ctx)))
+
+  IPipeline
+  (start! [this])
+
+  (run-pipeline [this & args]
+    (this {:args args}))
+
+  (run-pipeline-wait [this & args]
+    (let [future (this {:args args})]
+      (:args (.get future))))
+
+  (run-pipeline-timeout [this timeout-interval timeout-val & args]
+    (let [future (this {:args args})]
+      (try
+        (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
+        (catch TimeoutException e
+          timeout-val))))
+  (stop! [this]))
+
+(defn compound-pipeline [pipelines]
+  (CompoundPipeline. pipelines))
 
 (deftype MetadataObj [val meta-map-wrapper]
   clojure.lang.IDeref

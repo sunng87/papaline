@@ -154,3 +154,79 @@
                                               (swap! mark inc)))]
       (run-pipeline-wait p)
       (is (= 1 @mark)))))
+
+(deftest test-pre-post-hook-for-pipeline
+  (testing "pre-hook and post-hook"
+    (let [h0 (atom false)
+          h1 (atom false)
+          c0 (atom 0)
+          num 5
+          stgs (vec (map copy-stage (take num (repeat (fn [c] (swap! c inc))))))
+          ppl (pipeline stgs)]
+      (binding [*pre-execution-hook* (fn [_] (reset! h0 true))
+                *post-execution-hook* (fn [_] (reset! h1 true))]
+        (run-pipeline-wait ppl c0)
+        (is (= num @c0))
+        (is (and @h0 @h1))))
+    (let [h0 (atom false)
+          h1 (atom false)
+          c0 (atom 0)
+          sync-chan (chan)
+          num 5
+          f (vec (take num (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan]))))
+          f (conj f (fn [c sync-chan] (>!! sync-chan 0)))
+          stgs (map stage f)
+          ppl (pipeline stgs)]
+      (binding [*pre-execution-hook* (fn [_] (reset! h0 true))
+                *post-execution-hook* (fn [_] (reset! h1 true))]
+        (run-pipeline ppl c0 sync-chan)
+        (<!! sync-chan)
+        (is (= num @c0))
+        (is (and @h0 @h1)))))
+  (testing "for dedicated thread pool"
+    (let [h0 (atom false)
+          h1 (atom false)
+          c0 (atom 0)
+          sync-chan (chan)
+          num 5
+          executor (make-thread-pool 2 2)
+          f (vec (take num (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan]))))
+          f (conj f (fn [c sync-chan] (>!! sync-chan 0)))
+          stgs (map stage f)
+          ppl (dedicated-thread-pool-pipeline stgs executor )]
+      (binding [*pre-execution-hook* (fn [_] (reset! h0 true))
+                *post-execution-hook* (fn [_] (reset! h1 true))]
+        (run-pipeline ppl c0 sync-chan)
+        (<!! sync-chan)
+        (is (= num @c0))
+        (is (and @h0 @h1)))))
+  (testing "abort"
+    (let [c0 (atom 0)
+          h0 (atom 0)
+          h1 (atom 0)
+          stg0 (fn [c] (abort))
+          stg1 (fn [c] (swap! c inc))
+          ppl (pipeline (map stage [stg0 stg1]))
+          ppl2 (dedicated-thread-pool-pipeline (map stage [stg0 stg1])
+                                               (make-thread-pool 2 2))]
+      (binding [*pre-execution-hook* (fn [_] (swap! h0 inc))
+                *post-execution-hook* (fn [_] (swap! h1 inc))]
+        (run-pipeline-wait ppl c0)
+        (is (= 0 @c0))
+
+        (run-pipeline-wait ppl2 c0)
+        (is (= 0 @c0))
+
+        (is (= 2 @h0))
+        (is (= 2 @h1)))))
+  (testing "error-handler"
+    (let [h0 (atom false)
+          h1 (atom false)
+          e (atom 0)
+          f (fn [] (throw (ex-info "expected error." {})))
+          p (pipeline (map stage [f]) :error-handler (fn [_] (swap! e inc)))]
+      (binding [*pre-execution-hook* (fn [_] (reset! h0 true))
+                *post-execution-hook* (fn [_] (reset! h1 true))]
+        (try (run-pipeline-wait p) (catch Exception e))
+        (is (= 1 @e))
+        (is (and @h0 h1))))))

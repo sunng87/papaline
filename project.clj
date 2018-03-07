@@ -8,4 +8,5 @@
   :scm {:url "https://github.com/sunng87/papaline"
         :name "github"}
   :java-source-paths ["java_src"]
+  :javac-options ["-target" "1.8" "-source" "1.8"]
   :deploy-repositories {"releases" :clojars})

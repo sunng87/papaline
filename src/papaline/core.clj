@@ -2,12 +2,12 @@
   (:require [clojure.core.async :as a
              :refer :all
              :exclude [partition-by map into reduce partition take merge
-                       pipeline]]
+                       pipeline transduce]]
             [papaline.util :refer [defprotocol+ defrecord+]])
   (:import [papaline.concurrent ArgumentsAwareCallable]
            [java.util.concurrent ExecutorService TimeUnit TimeoutException Callable
-            ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
-            ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory]))
+                                 ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
+                                 ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory Future]))
 
 (defrecord Stage [buffer-factory stage-fn]
   clojure.lang.IFn
@@ -19,7 +19,7 @@
   (applyTo [this args]
     (apply stage-fn args)))
 
-(defn start-stage [s]
+(defn start-stage [^Stage s]
   (RealizedStage. ((.buffer-factory s)) (.stage-fn s) (:name s)))
 
 (defn stage [stage-fn & {:keys [in-chan
@@ -52,7 +52,7 @@
   (run-pipeline-timeout [this timeout-interval timeout-val & args])
   (stop! [this]))
 
-(defn- run-task [current-stage ctx error-handler]
+(defn- run-task [^RealizedStage current-stage ctx error-handler]
   (let [task (.stage-fn current-stage)
         args (:args ctx)
         args (if (or (nil? args) ;; empty arguments
@@ -74,7 +74,7 @@
 (defrecord+ Pipeline [done-chan stages error-handler]
   clojure.lang.IFn
   (invoke [this ctx]
-          (let [entry (-> stages first (.buffer))]
+          (let [entry (.buffer ^RealizedStage (first stages))]
             (go
               (when *pre-execution-hook*
                 (*pre-execution-hook* ctx))
@@ -84,9 +84,9 @@
   (start! [this]
           (loop [stages* stages]
             (when (first stages*)
-              (let [current-stage (first stages*)
+              (let [^RealizedStage current-stage (first stages*)
                     in-chan (.buffer current-stage)
-                    out-chan (when (second stages*) (.buffer (second stages*)))]
+                    out-chan (when (second stages*) (.buffer ^RealizedStage (second stages*)))]
                 (go-loop []
                   (let [[ctx port] (alts! [done-chan in-chan] :priority true)]
                     (if (not= port done-chan)
@@ -199,11 +199,11 @@
                 (this {:args args}))
 
   (run-pipeline-wait [this & args]
-                     (let [future (this {:args args})]
+                     (let [^Future future (this {:args args})]
                        (:args (.get future))))
 
   (run-pipeline-timeout [this timeout-interval timeout-val & args]
-                        (let [future (this {:args args})]
+                        (let [^Future future (this {:args args})]
                           (try
                             (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
                             (catch TimeoutException e
@@ -219,8 +219,8 @@
 (defn pipeline-stage
   "pipeline as a stage"
   [pipeline]
-  (let [stages (.stages pipeline)
-        in-chan (.buffer (first stages))]
+  (let [stages (.stages ^Pipeline pipeline)
+        in-chan (.buffer ^RealizedStage (first stages))]
     (stage (fn [& args]
              (apply run-pipeline-wait pipeline args))
            :in-chan in-chan)))
@@ -242,12 +242,12 @@
                                               :or {overflow-action (ThreadPoolExecutor$DiscardOldestPolicy.)}}]
   (ThreadPoolExecutor. (int threads) (int threads) (long 0)
                        TimeUnit/MILLISECONDS
-                       (LinkedBlockingQueue. queue-size)
+                       (LinkedBlockingQueue. ^long queue-size)
                        (counted-thread-factory "papaline-pool-%d" true)
                        ^RejectedExecutionHandler overflow-action))
 
 (defn dedicated-thread-pool-pipeline [stages thread-pool & {:keys [error-handler]}]
-  (DedicatedThreadPoolPipeline. thread-pool stages error-handler))
+  (DedicatedThreadPoolPipeline. thread-pool (mapv start-stage stages) error-handler))
 
 (defrecord+ CompoundPipeline [pipelines]
   clojure.lang.IFn
@@ -275,11 +275,11 @@
     (this {:args args}))
 
   (run-pipeline-wait [this & args]
-    (let [future (this {:args args})]
+    (let [^Future future (this {:args args})]
       (:args (.get future))))
 
   (run-pipeline-timeout [this timeout-interval timeout-val & args]
-    (let [future (this {:args args})]
+    (let [^Future future (this {:args args})]
       (try
         (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
         (catch TimeoutException e

@@ -1,9 +1,10 @@
-(ns papaline.util)
+(ns papaline.util
+  (:import (clojure.lang PersistentVector)))
 
 (defmacro defprotocol+ [name & funcs]
   (let [vararg-sym (symbol "&")
         normalized-func-specs (map #(let [[n a] %]
-                                      (if (.contains a vararg-sym)
+                                      (if (.contains ^PersistentVector a vararg-sym)
                                         [(symbol (str n "*"))
                                          (vec (remove (fn [_a]
                                                         (= _a vararg-sym)) a))
@@ -24,7 +25,7 @@
        ~@(map #(if (list? %)
                  (let [[n a & forms] %
                        vararg-sym (symbol "&")]
-                   (if (.contains a vararg-sym)
+                   (if (.contains ^PersistentVector a vararg-sym)
                      (apply list
                             (symbol (str n "*"))
                             (vec (remove (fn [_a] (= _a vararg-sym)) a))
@@ -37,7 +38,7 @@
        ~@(map #(if (list? %)
                  (let [[n a & forms] %
                        vararg-sym (symbol "&")]
-                   (if (.contains a vararg-sym)
+                   (if (.contains ^PersistentVector a vararg-sym)
                      (apply list
                             (symbol (str n "*"))
                             (vec (remove (fn [_a] (= _a vararg-sym)) a))

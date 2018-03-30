@@ -1,7 +1,9 @@
 (ns papaline.core-test
   (:require [clojure.test :refer :all]
             [clojure.core.async :refer [chan >!! <!! go timeout]]
-            [papaline.core :refer :all]))
+            [papaline.core :refer :all])
+  (:import (java.util.concurrent CompletableFuture)
+           (java.util.function Supplier)))
 
 (deftest test-stage
   (let [f (fn [arg])
@@ -34,10 +36,33 @@
         f (vec (take num (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan]))))
         f (conj f (fn [c sync-chan] (>!! sync-chan 0)))
         stgs (map stage f)
-        ppl (dedicated-thread-pool-pipeline stgs executor)]
-    (run-pipeline ppl c0 sync-chan)
+        ppl (dedicated-thread-pool-pipeline stgs executor)
+        ret (run-pipeline ppl c0 sync-chan)]
+    ;(run-pipeline ppl c0 sync-chan)
     (<!! sync-chan)
-    (is (= num @c0))))
+    (is (= num @c0))
+    (is (= (.get ret) {:args true}))))
+
+(deftest test-run-async-threadpool-pipeline
+  (let [c0 (atom 0)
+        sync-chan (chan)
+        num 5
+        executor (make-thread-pool 2 2)
+        f (-> (take num (repeat (fn [c sync-chan]
+                                  (swap! c inc)
+                                  (CompletableFuture/supplyAsync (reify Supplier
+                                                                   (get [this]
+                                                                     (Thread/sleep 100)
+                                                                     [c sync-chan]))))))
+              (interleave (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan])))
+              (vec))
+        f (conj f (fn [c sync-chan] (CompletableFuture/completedFuture (>!! sync-chan 0))))
+        stgs (map stage f)
+        ppl (async-dedicated-thread-pool-pipeline stgs executor)
+        ret (run-pipeline ppl c0 sync-chan)]
+    (<!! sync-chan)
+    (is (= (* 2 num) @c0))
+    (is (= (.get ret) {:args true}))))
 
 (deftest test-copy-stage
   (let [c0 (atom 0)
@@ -77,13 +102,26 @@
   (let [c0 (atom 0)
         stg0 (fn [c] (abort))
         stg1 (fn [c] (swap! c inc))
-        ppl (pipeline (map stage [stg0 stg1]))
-        ppl2 (dedicated-thread-pool-pipeline (map stage [stg0 stg1])
-                                            (make-thread-pool 2 2))]
+        normal-stgs (map stage [stg0 stg1])
+
+        async-stg0 (fn [c] (CompletableFuture/supplyAsync (reify Supplier (get [this] (abort)))))
+        async-stg1 (fn [c] (swap! c inc) (CompletableFuture/completedFuture "Done"))
+        async-stgs (map stage [async-stg0 async-stg1])
+
+        ppl (pipeline normal-stgs)
+        ppl2 (dedicated-thread-pool-pipeline normal-stgs (make-thread-pool 2 2))
+        ppl3 (async-dedicated-thread-pool-pipeline normal-stgs (make-thread-pool 2 2))
+        ppl4 (async-dedicated-thread-pool-pipeline async-stgs (make-thread-pool 2 2))]
     (run-pipeline-wait ppl c0)
     (is (= 0 @c0))
 
     (run-pipeline-wait ppl2 c0)
+    (is (= 0 @c0))
+
+    (run-pipeline-wait ppl3 c0)
+    (is (= 0 @c0))
+
+    (run-pipeline-wait ppl4 c0)
     (is (= 0 @c0))))
 
 (deftest test-abort-and-return
@@ -91,13 +129,27 @@
     (let [c0 (atom 0)
           stg0 (fn [c] (abort -1))
           stg1 (fn [c] (swap! c inc))
+          normal-stgs (map stage [stg0 stg1])
+
+          async-stg0 (fn [c] (CompletableFuture/supplyAsync (reify Supplier (get [this] (abort -1)))))
+          async-stg1 (fn [c] (swap! c inc) (CompletableFuture/completedFuture "Done"))
+          async-stgs (map stage [async-stg0 async-stg1])
+
           ppl (pipeline (map stage [stg0 stg1]))
           ppl2 (dedicated-thread-pool-pipeline (map stage [stg0 stg1])
-                                               (make-thread-pool 2 2))]
+                                               (make-thread-pool 2 2))
+          ppl3 (async-dedicated-thread-pool-pipeline normal-stgs (make-thread-pool 2 2))
+          ppl4 (async-dedicated-thread-pool-pipeline async-stgs (make-thread-pool 2 2))]
       (is (= -1 (run-pipeline-wait ppl c0)))
       (is (= 0 @c0))
 
       (is (= -1 (run-pipeline-wait ppl2 c0)))
+      (is (= 0 @c0))
+
+      (is (= -1 (run-pipeline-wait ppl3 c0)))
+      (is (= 0 @c0))
+
+      (is (= -1 (run-pipeline-wait ppl4 c0)))
       (is (= 0 @c0)))))
 
 (deftest test-fork-join
@@ -155,6 +207,19 @@
       (run-pipeline-wait p)
       (is (= 1 @mark)))))
 
+(deftest test-fork-join-in-async-dedicated-threadpool-pipeline
+  (testing "async dedicated thread pool doesn't accept (fork) and (join) result, error expected"
+    (let [mark (atom 0)
+          t    (make-thread-pool 2 2)
+          f    (named-stage "demo-stage-0" (fn [] (fork (range 10))))
+          p    (async-dedicated-thread-pool-pipeline [f] t
+                                                     :error-handler
+                                                     (fn [e]
+                                                       (is (instance? UnsupportedOperationException e))
+                                                       (swap! mark inc)))]
+      (run-pipeline-wait p)
+      (is (= 1 @mark)))))
+
 (deftest test-pre-post-hook-for-pipeline
   (testing "pre-hook and post-hook"
     (let [h0 (atom false)
@@ -193,7 +258,24 @@
           f (vec (take num (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan]))))
           f (conj f (fn [c sync-chan] (>!! sync-chan 0)))
           stgs (map stage f)
-          ppl (dedicated-thread-pool-pipeline stgs executor )]
+          ppl (dedicated-thread-pool-pipeline stgs executor)]
+      (binding [*pre-execution-hook* (fn [_] (reset! h0 true))
+                *post-execution-hook* (fn [_] (reset! h1 true))]
+        (run-pipeline ppl c0 sync-chan)
+        (<!! sync-chan)
+        (is (= num @c0))
+        (is (and @h0 @h1)))))
+  (testing "for async dedicated thread pool"
+    (let [h0 (atom false)
+          h1 (atom false)
+          c0 (atom 0)
+          sync-chan (chan)
+          num 5
+          executor (make-thread-pool 2 2)
+          f (vec (take num (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan]))))
+          f (conj f (fn [c sync-chan] (>!! sync-chan 0)))
+          stgs (map stage f)
+          ppl (async-dedicated-thread-pool-pipeline stgs executor)]
       (binding [*pre-execution-hook* (fn [_] (reset! h0 true))
                 *post-execution-hook* (fn [_] (reset! h1 true))]
         (run-pipeline ppl c0 sync-chan)
@@ -208,7 +290,9 @@
           stg1 (fn [c] (swap! c inc))
           ppl (pipeline (map stage [stg0 stg1]))
           ppl2 (dedicated-thread-pool-pipeline (map stage [stg0 stg1])
-                                               (make-thread-pool 2 2))]
+                                               (make-thread-pool 2 2))
+          ppl3 (async-dedicated-thread-pool-pipeline (map stage [stg0 stg1])
+                                                     (make-thread-pool 2 2))]
       (binding [*pre-execution-hook* (fn [_] (swap! h0 inc))
                 *post-execution-hook* (fn [_] (swap! h1 inc))]
         (run-pipeline-wait ppl c0)
@@ -217,8 +301,11 @@
         (run-pipeline-wait ppl2 c0)
         (is (= 0 @c0))
 
-        (is (= 2 @h0))
-        (is (= 2 @h1)))))
+        (run-pipeline-wait ppl3 c0)
+        (is (= 0 @c0))
+
+        (is (= 3 @h0))
+        (is (= 3 @h1)))))
   (testing "error-handler"
     (let [h0 (atom false)
           h1 (atom false)

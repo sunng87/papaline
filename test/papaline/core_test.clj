@@ -48,18 +48,20 @@
         sync-chan (chan)
         num 5
         executor (make-thread-pool 2 2)
-        f (vec (take num (repeat (fn [c sync-chan]
-                                   (swap! c inc)
-                                   (CompletableFuture/supplyAsync (reify Supplier
-                                                                    (get [this]
-                                                                      (Thread/sleep 300)
-                                                                      [c sync-chan])))))))
+        f (-> (take num (repeat (fn [c sync-chan]
+                                  (swap! c inc)
+                                  (CompletableFuture/supplyAsync (reify Supplier
+                                                                   (get [this]
+                                                                     (Thread/sleep 100)
+                                                                     [c sync-chan]))))))
+              (interleave (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan])))
+              (vec))
         f (conj f (fn [c sync-chan] (CompletableFuture/completedFuture (>!! sync-chan 0))))
         stgs (map stage f)
         ppl (async-dedicated-thread-pool-pipeline stgs executor)
         ret (run-pipeline ppl c0 sync-chan)]
     (<!! sync-chan)
-    (is (= num @c0))
+    (is (= (* 2 num) @c0))
     (is (= (.get ret) {:args true}))))
 
 (deftest test-copy-stage
@@ -256,7 +258,7 @@
           f (vec (take num (repeat (fn [c sync-chan] (swap! c inc) [c sync-chan]))))
           f (conj f (fn [c sync-chan] (>!! sync-chan 0)))
           stgs (map stage f)
-          ppl (dedicated-thread-pool-pipeline stgs executor )]
+          ppl (dedicated-thread-pool-pipeline stgs executor)]
       (binding [*pre-execution-hook* (fn [_] (reset! h0 true))
                 *post-execution-hook* (fn [_] (reset! h1 true))]
         (run-pipeline ppl c0 sync-chan)

@@ -7,7 +7,8 @@
   (:import [papaline.concurrent ArgumentsAwareCallable]
            [java.util.concurrent ExecutorService TimeUnit TimeoutException Callable
                                  ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
-                                 ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory Future]))
+                                 ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory Future CompletableFuture CompletionException]
+           (java.util.function BiFunction)))
 
 (defrecord Stage [buffer-factory stage-fn]
   clojure.lang.IFn
@@ -52,6 +53,18 @@
   (run-pipeline-timeout [this timeout-interval timeout-val & args])
   (stop! [this]))
 
+(defn- process-exception [ctx args e stage-name error-handler]
+  (let [cause (if (instance? CompletionException e) (.getCause ^Throwable e) e)]
+    (if (and (instance? clojure.lang.ExceptionInfo cause)
+             (:abort (ex-data cause)))
+      (merge ctx (ex-data cause))
+      (let [ex (ex-info "Papaline stage error"
+                        {:args  args
+                         :stage stage-name} e)]
+        (when error-handler
+          (error-handler ex))
+        (assoc ctx :ex ex)))))
+
 (defn- run-task [^RealizedStage current-stage ctx error-handler]
   (let [task (.stage-fn current-stage)
         args (:args ctx)
@@ -61,15 +74,7 @@
     (try
       (assoc ctx :args (apply task args))
       (catch Exception e
-        (if (and (instance? clojure.lang.ExceptionInfo e)
-                 (:abort (ex-data e)))
-          (merge ctx (ex-data e))
-          (let [ex (ex-info "Papaline stage error"
-                            {:args args
-                             :stage (:name current-stage)} e)]
-            (when error-handler
-              (error-handler ex))
-            (assoc ctx :ex ex)))))))
+        (process-exception ctx args e (:name current-stage) error-handler)))))
 
 (defrecord+ Pipeline [done-chan stages error-handler]
   clojure.lang.IFn
@@ -178,10 +183,12 @@
                                  ctx)
 
                                (:fork (meta (:args ctx)))
-                               (error-handler (UnsupportedOperationException. "Fork is not supported in DedicatedThreadPoolPipeline"))
+                               (when error-handler
+                                 (error-handler (UnsupportedOperationException. "Fork is not supported in DedicatedThreadPoolPipeline")))
 
                                (:join (meta (:args ctx)))
-                               (error-handler (UnsupportedOperationException. "Join is not supported in DedicatedThreadPoolPipeline"))
+                               (when error-handler
+                                 (error-handler (UnsupportedOperationException. "Join is not supported in DedicatedThreadPoolPipeline")))
                                :else (recur (rest stgs) ctx)))
                            (do
                              (when post-hook (post-hook ctx))
@@ -204,6 +211,83 @@
 
   (run-pipeline-timeout [this timeout-interval timeout-val & args]
                         (let [^Future future (this {:args args})]
+                          (try
+                            (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
+                            (catch TimeoutException e
+                              timeout-val))))
+  (stop! [this]))
+
+(defn- run-task2 [^RealizedStage current-stage ctx error-handler]
+  (let [task (.stage-fn current-stage)
+        args (:args ctx)
+        args (if (or (nil? args) ;; empty arguments
+                     (sequential? args))
+               args [args])]
+    (try
+      (let [task-ret (apply task args)]
+        [(if (instance? CompletableFuture task-ret)
+           task-ret
+           (CompletableFuture/completedFuture task-ret))
+         ctx])
+      (catch Exception e
+        (let [ctx (process-exception ctx args e (:name current-stage) error-handler)]
+          [(CompletableFuture/completedFuture (:args ctx))
+           ctx])))))
+
+(defrecord+ AsyncDedicatedThreadPoolPipeline [executor stages error-handler]
+  clojure.lang.IFn
+  (invoke [this ctx]
+          (let [pre-hook  *pre-execution-hook*
+                post-hook *post-execution-hook*
+                result (CompletableFuture.)]
+            (letfn [(clos [stgs ctx]
+                      (if-let [^RealizedStage s (first stgs)]
+                        (let [[^CompletableFuture future ctx] (run-task2 s ctx error-handler)]
+                          (if (.isDone future)
+                            (process-result (assoc ctx :args (.get future)) stgs)
+                            (.handleAsync ^CompletableFuture future
+                                          (reify BiFunction
+                                            (apply [this next-args ex]
+                                              (let [ctx (if (some? ex)
+                                                          (process-exception ctx (:args ctx) ex (:name s) error-handler)
+                                                          (assoc ctx :args next-args))]
+                                                (process-result ctx stgs))))
+                                          executor)))
+                        (do
+                          (when post-hook (post-hook ctx))
+                          (.complete result ctx))))
+                    (process-result [ctx stgs]
+                      (let [args-meta (meta (:args ctx))
+                            use-fork-or-join? (or (:fork args-meta) (:join args-meta))]
+                        (if (or (:abort ctx) use-fork-or-join?)
+                          (do
+                            (when post-hook (post-hook ctx))
+                            (when (and error-handler use-fork-or-join?)
+                              (try
+                                (error-handler (UnsupportedOperationException. "Fork or Join is not supported in AsyncDedicatedThreadPoolPipeline"))
+                                (catch Exception _)))
+                            (.complete result ctx))
+                          (clos (rest stgs) ctx))))]
+              (.submit ^ExecutorService executor ^Callable (ArgumentsAwareCallable. ^Callable
+                                                                                    (fn []
+                                                                                      (when pre-hook (pre-hook ctx))
+                                                                                      (clos stages ctx))
+                                                                                    (if (not-empty (:args ctx))
+                                                                                      (.toArray ^clojure.lang.ArraySeq (:args ctx))
+                                                                                      (into-array [])))))
+            result))
+  IPipeline
+  (start! [this])
+
+  (run-pipeline [this & args]
+                (this {:args args}))
+
+  (run-pipeline-wait [this & args]
+                     (let [future (this {:args args})]
+                       (:args (.get future))))
+
+  (run-pipeline-timeout [this timeout-interval timeout-val & args]
+                        (let [future (this {:args args})]
                           (try
                             (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
                             (catch TimeoutException e
@@ -249,6 +333,9 @@
 (defn dedicated-thread-pool-pipeline [stages thread-pool & {:keys [error-handler]}]
   (DedicatedThreadPoolPipeline. thread-pool (mapv start-stage stages) error-handler))
 
+(defn async-dedicated-thread-pool-pipeline [stages thread-pool & {:keys [error-handler]}]
+  (AsyncDedicatedThreadPoolPipeline. thread-pool (mapv start-stage stages) error-handler))
+
 (defrecord+ CompoundPipeline [pipelines]
   clojure.lang.IFn
   (invoke [this ctx]
@@ -260,11 +347,13 @@
             (:abort ctx) ctx
             (:ex ctx) ctx
             (:fork (meta (:args ctx)))
-            (error-handler (UnsupportedOperationException.
-                            "Fork is not supported for now"))
+            (when-let [error-handler (:error-handler p)]
+              (error-handler (UnsupportedOperationException.
+                               "Fork is not supported for now")))
             (:join (meta (:args ctx)))
-            (error-handler (UnsupportedOperationException.
-                            "Join is not supported for now "))
+            (when-let [error-handler (:error-handler p)]
+              (error-handler (UnsupportedOperationException.
+                               "Join is not supported for now ")))
             :else (recur (rest ps) ctx)))
         ctx)))
 

@@ -224,15 +224,15 @@
                      (sequential? args))
                args [args])]
     (try
-      (let [task-ret (apply task args)]
-        [(if (instance? CompletableFuture task-ret)
-           task-ret
-           (CompletableFuture/completedFuture task-ret))
+      (let [next-args (apply task args)]
+        [(if (instance? CompletableFuture next-args)
+           next-args
+           (CompletableFuture/completedFuture next-args))
          ctx])
       (catch Exception e
-        (let [ctx (process-exception ctx args e (:name current-stage) error-handler)]
-          [(CompletableFuture/completedFuture (:args ctx))
-           ctx])))))
+        (let [new-ctx (process-exception ctx args e (:name current-stage) error-handler)]
+          [(CompletableFuture/completedFuture (:args new-ctx))
+           new-ctx])))))
 
 (defrecord+ AsyncDedicatedThreadPoolPipeline [executor stages error-handler]
   clojure.lang.IFn
@@ -242,15 +242,15 @@
                 result (CompletableFuture.)]
             (letfn [(clos [stgs ctx]
                       (if-let [^RealizedStage s (first stgs)]
-                        (let [[^CompletableFuture future ctx] (run-task2 s ctx error-handler)]
-                          (if (.isDone future)
-                            (process-result (assoc ctx :args (.get future)) stgs)
-                            (.handleAsync ^CompletableFuture future
+                        (let [[^CompletableFuture next-args-future new-ctx] (run-task2 s ctx error-handler)]
+                          (if (.isDone next-args-future)
+                            (process-result (assoc new-ctx :args (.get next-args-future)) stgs)
+                            (.handleAsync ^CompletableFuture next-args-future
                                           (reify BiFunction
                                             (apply [this next-args ex]
                                               (let [ctx (if (some? ex)
-                                                          (process-exception ctx (:args ctx) ex (:name s) error-handler)
-                                                          (assoc ctx :args next-args))]
+                                                          (process-exception new-ctx (:args new-ctx) ex (:name s) error-handler)
+                                                          (assoc new-ctx :args next-args))]
                                                 (process-result ctx stgs))))
                                           executor)))
                         (do

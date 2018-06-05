@@ -8,8 +8,7 @@
            [java.util.concurrent ExecutorService TimeUnit TimeoutException Callable
                                  ThreadPoolExecutor LinkedBlockingQueue RejectedExecutionHandler
                                  ThreadPoolExecutor$DiscardOldestPolicy ThreadFactory Future CompletableFuture CompletionException]
-           (java.util.function BiFunction)
-           (java.util Objects List)))
+           (java.util.function BiFunction)))
 
 (defrecord Stage [buffer-factory stage-fn]
   clojure.lang.IFn
@@ -291,12 +290,12 @@
 
   (run-pipeline-wait [this & args]
                      (let [future (this {:args args})]
-                       (:args (.get future))))
+                       (:args (.get ^Future future))))
 
   (run-pipeline-timeout [this timeout-interval timeout-val & args]
                         (let [future (this {:args args})]
                           (try
-                            (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
+                            (:args (.get ^Future future timeout-interval TimeUnit/MILLISECONDS))
                             (catch TimeoutException e
                               timeout-val))))
   (stop! [this]))

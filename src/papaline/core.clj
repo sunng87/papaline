@@ -166,6 +166,9 @@
   (stop! [this]
          (>!! done-chan 0)))
 
+(defn- ^Callable wrap-with-arguments-aware-callable [callable args-array]
+  (ArgumentsAwareCallable. ^Callable callable ^"[Ljava.lang.Object;" args-array))
+
 (defrecord+ DedicatedThreadPoolPipeline [executor stages error-handler]
   clojure.lang.IFn
   (invoke [this ctx]
@@ -193,11 +196,11 @@
                            (do
                              (when post-hook (post-hook ctx))
                              ctx))))
-                clos-wrapper (ArgumentsAwareCallable. ^Callable clos
-                                                      (if (not-empty (:args ctx))
-                                                        (.toArray ^clojure.lang.ArraySeq (:args ctx))
-                                                        (into-array [])))]
-            (.submit ^ExecutorService executor ^Callable clos-wrapper)))
+                clos-wrapper (wrap-with-arguments-aware-callable clos
+                                                                 (if (not-empty (:args ctx))
+                                                                   (.toArray ^clojure.lang.ArraySeq (:args ctx))
+                                                                   (into-array [])))]
+            (.submit ^ExecutorService executor clos-wrapper)))
 
   IPipeline
   (start! [this])
@@ -239,20 +242,26 @@
   (invoke [this ctx]
           (let [pre-hook  *pre-execution-hook*
                 post-hook *post-execution-hook*
-                result (CompletableFuture.)]
+                result (CompletableFuture.)
+                args-array (if (not-empty (:args ctx))
+                             (.toArray ^clojure.lang.ArraySeq (:args ctx))
+                             (into-array []))]
             (letfn [(clos [stgs ctx]
                       (if-let [^RealizedStage s (first stgs)]
                         (let [[^CompletableFuture next-args-future new-ctx] (run-task2 s ctx error-handler)]
                           (if (.isDone next-args-future)
                             (process-result (assoc new-ctx :args (.get next-args-future)) stgs)
-                            (.handleAsync ^CompletableFuture next-args-future
-                                          (reify BiFunction
-                                            (apply [this next-args ex]
-                                              (let [ctx (if (some? ex)
-                                                          (process-exception new-ctx (:args new-ctx) ex (:name s) error-handler)
-                                                          (assoc new-ctx :args next-args))]
-                                                (process-result ctx stgs))))
-                                          executor)))
+                            (.handle ^CompletableFuture next-args-future
+                                     (reify BiFunction
+                                       (apply [_ next-args ex]
+                                         (.submit ^ExecutorService executor
+                                                  (wrap-with-arguments-aware-callable
+                                                    (fn []
+                                                      (let [ctx (if (some? ex)
+                                                                  (process-exception new-ctx (:args new-ctx) ex (:name s) error-handler)
+                                                                  (assoc new-ctx :args next-args))]
+                                                        (process-result ctx stgs)))
+                                                    args-array)))))))
                         (do
                           (when post-hook (post-hook ctx))
                           (.complete result ctx))))
@@ -268,13 +277,10 @@
                                 (catch Exception _)))
                             (.complete result ctx))
                           (clos (rest stgs) ctx))))]
-              (.submit ^ExecutorService executor ^Callable (ArgumentsAwareCallable. ^Callable
-                                                                                    (fn []
-                                                                                      (when pre-hook (pre-hook ctx))
-                                                                                      (clos stages ctx))
-                                                                                    (if (not-empty (:args ctx))
-                                                                                      (.toArray ^clojure.lang.ArraySeq (:args ctx))
-                                                                                      (into-array [])))))
+              (.submit ^ExecutorService executor (wrap-with-arguments-aware-callable (fn []
+                                                                                       (when pre-hook (pre-hook ctx))
+                                                                                       (clos stages ctx))
+                                                                                     args-array)))
             result))
   IPipeline
   (start! [this])
@@ -284,12 +290,12 @@
 
   (run-pipeline-wait [this & args]
                      (let [future (this {:args args})]
-                       (:args (.get future))))
+                       (:args (.get ^Future future))))
 
   (run-pipeline-timeout [this timeout-interval timeout-val & args]
                         (let [future (this {:args args})]
                           (try
-                            (:args (.get future timeout-interval TimeUnit/MILLISECONDS))
+                            (:args (.get ^Future future timeout-interval TimeUnit/MILLISECONDS))
                             (catch TimeoutException e
                               timeout-val))))
   (stop! [this]))

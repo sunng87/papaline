@@ -248,12 +248,13 @@
                              (into-array []))]
             (letfn [(clos [stgs ctx]
                       (if-let [^RealizedStage s (first stgs)]
-                        (let [[^CompletableFuture next-args-future new-ctx] (run-task2 s ctx error-handler)]
-                          (if (.isDone next-args-future)
-                            (process-result (assoc new-ctx :args (.get next-args-future)) stgs)
-                            (.handle ^CompletableFuture next-args-future
-                                     (reify BiFunction
-                                       (apply [_ next-args ex]
+                        (let [[^CompletableFuture next-args-future new-ctx] (run-task2 s ctx error-handler)
+                              processor (Thread/currentThread)]
+                          (.handle ^CompletableFuture next-args-future
+                                   (reify BiFunction
+                                     (apply [_ next-args ex]
+                                       (if (= processor (Thread/currentThread))
+                                         (process-result (assoc new-ctx :args next-args) stgs)
                                          (.submit ^ExecutorService executor
                                                   (wrap-with-arguments-aware-callable
                                                     (fn []

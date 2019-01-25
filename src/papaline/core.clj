@@ -245,7 +245,7 @@
     (error-handler ctx (:args ctx) ex)
     (assoc ctx :args next-args)))
 
-(defrecord+ AsyncDedicatedThreadPoolPipeline [executor stages user-error-handler]
+(defrecord+ AsyncDedicatedThreadPoolPipeline [executor stages error-handler]
   clojure.lang.IFn
   (invoke [this ctx]
           (let [pre-hook  *pre-execution-hook*
@@ -257,7 +257,7 @@
             (letfn [(clos [stgs ctx]
                       (if-let [^RealizedStage current-stage (first stgs)]
                         (let [current-stage-name (:name current-stage)
-                              error-handler (stage-name-aware-error-handler current-stage-name user-error-handler)
+                              error-handler (stage-name-aware-error-handler current-stage-name error-handler)
                               processor (Thread/currentThread)]
                           (.handle (run-stage current-stage ctx)
                                    (reify BiFunction
@@ -280,9 +280,9 @@
                         (if (or (:abort ctx) use-fork-or-join?)
                           (do
                             (when post-hook (post-hook ctx))
-                            (when (and user-error-handler use-fork-or-join?)
+                            (when (and error-handler use-fork-or-join?)
                               (try
-                                (user-error-handler (UnsupportedOperationException. "Fork or Join is not supported in AsyncDedicatedThreadPoolPipeline"))
+                                (error-handler (UnsupportedOperationException. "Fork or Join is not supported in AsyncDedicatedThreadPoolPipeline"))
                                 (catch Exception _)))
                             (.complete result ctx))
                           (clos (rest stgs) ctx))))]

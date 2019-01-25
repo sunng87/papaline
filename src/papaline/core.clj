@@ -220,7 +220,7 @@
                               timeout-val))))
   (stop! [this]))
 
-(defn- ^CompletableFuture run-stage [^RealizedStage current-stage ctx]
+(defn- ^CompletableFuture run-stage* [^RealizedStage current-stage ctx]
   (let [task (.stage-fn current-stage)
         args (:args ctx)
         args (if (or (nil? args) ;; empty arguments
@@ -250,12 +250,12 @@
                 args-array (if (not-empty (:args ctx))
                              (.toArray ^clojure.lang.ArraySeq (:args ctx))
                              (into-array []))]
-            (letfn [(clos [stgs ctx]
+            (letfn [(run-stages [stgs ctx]
                       (if-let [^RealizedStage current-stage (first stgs)]
                         (let [current-stage-name (:name current-stage)
                               stage-name-aware-error-handler (partial process-exception current-stage-name error-handler)
                               processor (Thread/currentThread)]
-                          (.handle (run-stage current-stage ctx)
+                          (.handle (run-stage* current-stage ctx)
                                    (reify BiFunction
                                      (apply [_ next-args ex]
                                        (if (= processor (Thread/currentThread))
@@ -281,10 +281,10 @@
                                 (error-handler (UnsupportedOperationException. "Fork or Join is not supported in AsyncDedicatedThreadPoolPipeline"))
                                 (catch Exception _)))
                             (.complete result ctx))
-                          (clos (rest stgs) ctx))))]
+                          (run-stages (rest stgs) ctx))))]
               (.submit ^ExecutorService executor (wrap-with-arguments-aware-callable (fn []
                                                                                        (when pre-hook (pre-hook ctx))
-                                                                                       (clos stages ctx))
+                                                                                       (run-stages stages ctx))
                                                                                      args-array)))
             result))
   IPipeline

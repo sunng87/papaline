@@ -53,7 +53,7 @@
   (run-pipeline-timeout [this timeout-interval timeout-val & args])
   (stop! [this]))
 
-(defn- process-exception [ctx args e stage-name error-handler]
+(defn- process-exception [stage-name error-handler ctx args e]
   (let [cause (if (instance? CompletionException e) (.getCause ^Throwable e) e)]
     (if (and (instance? clojure.lang.ExceptionInfo cause)
              (:abort (ex-data cause)))
@@ -74,7 +74,7 @@
     (try
       (assoc ctx :args (apply task args))
       (catch Exception e
-        (process-exception ctx args e (:name current-stage) error-handler)))))
+        (process-exception (:name current-stage) error-handler ctx args e)))))
 
 (defrecord+ Pipeline [done-chan stages error-handler]
   clojure.lang.IFn
@@ -220,7 +220,7 @@
                               timeout-val))))
   (stop! [this]))
 
-(defn- run-task2 [^RealizedStage current-stage ctx error-handler]
+(defn- ^CompletableFuture run-stage* [^RealizedStage current-stage ctx]
   (let [task (.stage-fn current-stage)
         args (:args ctx)
         args (if (or (nil? args) ;; empty arguments
@@ -228,14 +228,18 @@
                args [args])]
     (try
       (let [next-args (apply task args)]
-        [(if (instance? CompletableFuture next-args)
-           next-args
-           (CompletableFuture/completedFuture next-args))
-         ctx])
+        (if (instance? CompletableFuture next-args)
+          next-args
+          (CompletableFuture/completedFuture next-args)))
       (catch Exception e
-        (let [new-ctx (process-exception ctx args e (:name current-stage) error-handler)]
-          [(CompletableFuture/completedFuture (:args new-ctx))
-           new-ctx])))))
+        (let [f (CompletableFuture.)]
+          (.completeExceptionally f e)
+          f)))))
+
+(defn- get-next-ctx [ctx next-args ex error-handler]
+  (if (some? ex)
+    (error-handler ctx (:args ctx) ex)
+    (assoc ctx :args next-args)))
 
 (defrecord+ AsyncDedicatedThreadPoolPipeline [executor stages error-handler]
   clojure.lang.IFn
@@ -246,22 +250,22 @@
                 args-array (if (not-empty (:args ctx))
                              (.toArray ^clojure.lang.ArraySeq (:args ctx))
                              (into-array []))]
-            (letfn [(clos [stgs ctx]
-                      (if-let [^RealizedStage s (first stgs)]
-                        (let [[^CompletableFuture next-args-future new-ctx] (run-task2 s ctx error-handler)
+            (letfn [(run-stages [stgs ctx]
+                      (if-let [^RealizedStage current-stage (first stgs)]
+                        (let [current-stage-name (:name current-stage)
+                              stage-name-aware-error-handler (partial process-exception current-stage-name error-handler)
                               processor (Thread/currentThread)]
-                          (.handle ^CompletableFuture next-args-future
+                          (.handle (run-stage* current-stage ctx)
                                    (reify BiFunction
                                      (apply [_ next-args ex]
                                        (if (= processor (Thread/currentThread))
-                                         (process-result (assoc new-ctx :args next-args) stgs)
+                                         (-> (get-next-ctx ctx next-args ex stage-name-aware-error-handler)
+                                             (process-result stgs))
                                          (.submit ^ExecutorService executor
                                                   (wrap-with-arguments-aware-callable
                                                     (fn []
-                                                      (let [ctx (if (some? ex)
-                                                                  (process-exception new-ctx (:args new-ctx) ex (:name s) error-handler)
-                                                                  (assoc new-ctx :args next-args))]
-                                                        (process-result ctx stgs)))
+                                                      (-> (get-next-ctx ctx next-args ex stage-name-aware-error-handler)
+                                                          (process-result stgs)))
                                                     args-array)))))))
                         (do
                           (when post-hook (post-hook ctx))
@@ -277,10 +281,10 @@
                                 (error-handler (UnsupportedOperationException. "Fork or Join is not supported in AsyncDedicatedThreadPoolPipeline"))
                                 (catch Exception _)))
                             (.complete result ctx))
-                          (clos (rest stgs) ctx))))]
+                          (run-stages (rest stgs) ctx))))]
               (.submit ^ExecutorService executor (wrap-with-arguments-aware-callable (fn []
                                                                                        (when pre-hook (pre-hook ctx))
-                                                                                       (clos stages ctx))
+                                                                                       (run-stages stages ctx))
                                                                                      args-array)))
             result))
   IPipeline

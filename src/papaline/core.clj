@@ -220,9 +220,6 @@
                               timeout-val))))
   (stop! [this]))
 
-(defn- stage-name-aware-error-handler [stage-name user-error-handler]
-  (partial process-exception stage-name user-error-handler))
-
 (defn- ^CompletableFuture run-stage [^RealizedStage current-stage ctx]
   (let [task (.stage-fn current-stage)
         args (:args ctx)
@@ -256,18 +253,18 @@
             (letfn [(clos [stgs ctx]
                       (if-let [^RealizedStage current-stage (first stgs)]
                         (let [current-stage-name (:name current-stage)
-                              error-handler (stage-name-aware-error-handler current-stage-name error-handler)
+                              stage-name-aware-error-handler (partial process-exception current-stage-name error-handler)
                               processor (Thread/currentThread)]
                           (.handle (run-stage current-stage ctx)
                                    (reify BiFunction
                                      (apply [_ next-args ex]
                                        (if (= processor (Thread/currentThread))
-                                         (-> (get-next-ctx ctx next-args ex error-handler)
+                                         (-> (get-next-ctx ctx next-args ex stage-name-aware-error-handler)
                                              (process-result stgs))
                                          (.submit ^ExecutorService executor
                                                   (wrap-with-arguments-aware-callable
                                                     (fn []
-                                                      (-> (get-next-ctx ctx next-args ex error-handler)
+                                                      (-> (get-next-ctx ctx next-args ex stage-name-aware-error-handler)
                                                           (process-result stgs)))
                                                     args-array)))))))
                         (do

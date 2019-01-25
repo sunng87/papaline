@@ -53,7 +53,7 @@
   (run-pipeline-timeout [this timeout-interval timeout-val & args])
   (stop! [this]))
 
-(defn- process-exception [ctx args e stage-name error-handler]
+(defn- process-exception [stage-name error-handler ctx args e]
   (let [cause (if (instance? CompletionException e) (.getCause ^Throwable e) e)]
     (if (and (instance? clojure.lang.ExceptionInfo cause)
              (:abort (ex-data cause)))
@@ -74,7 +74,7 @@
     (try
       (assoc ctx :args (apply task args))
       (catch Exception e
-        (process-exception ctx args e (:name current-stage) error-handler)))))
+        (process-exception (:name current-stage) error-handler ctx args e)))))
 
 (defrecord+ Pipeline [done-chan stages error-handler]
   clojure.lang.IFn
@@ -221,8 +221,7 @@
   (stop! [this]))
 
 (defn- stage-name-aware-error-handler [stage-name user-error-handler]
-  (fn [ctx args e]
-    (process-exception ctx args e stage-name user-error-handler)))
+  (partial process-exception stage-name user-error-handler))
 
 (defn- ^CompletableFuture run-stage [^RealizedStage current-stage ctx]
   (let [task (.stage-fn current-stage)
